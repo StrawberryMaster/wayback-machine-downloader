@@ -62,6 +62,23 @@ docker build -t wayback_machine_downloader .
 docker run -it --rm wayback_machine_downloader [options] URL
 ```
 
+### 🐳 Using Docker Compose
+
+We can also use it with Docker Compose, which provides a lot of benefits for extending more functionalities (such as implementing storing previous downloads in a database):
+```yaml
+# docker-compose.yml
+services:
+  wayback_machine_downloader:
+    build:
+        context: .
+    tty: true
+    image: wayback_machine_downloader:latest
+    container_name: wayback_machine_downloader
+    volumes:
+      - .:/build:rw
+      - ./websites:/build/websites:rw
+```
+
 ## ⚙️ Configuration
 There are a few constants that can be edited in the `wayback_machine_downloader.rb` file for your convenience. The default values may be conservative, so you can adjust them to your needs. They are:
 

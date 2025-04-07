@@ -18,6 +18,11 @@ Gemfile.lock
 .ruby-version
 .rbenv*
 
+## ENV
+*.env*
+!.env*.example
+
+
 ## RCOV
 coverage.data
 
