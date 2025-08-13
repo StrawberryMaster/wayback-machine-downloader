@@ -639,13 +639,13 @@ class WaybackMachineDownloader
       end
 
       # URLs in HTML attributes
-      rewrite_html_attr_urls(content)
+      content = rewrite_html_attr_urls(content)
       
       # URLs in CSS
-      rewrite_css_urls(content)
+      content = rewrite_css_urls(content)
       
       # URLs in JavaScript
-      rewrite_js_urls(content)
+      content = rewrite_js_urls(content)
       
       # for URLs in HTML attributes that start with a single slash
       content.gsub!(/(\s(?:href|src|action|data-src|data-url)=["'])\/([^"'\/][^"']*)(["'])/i) do
