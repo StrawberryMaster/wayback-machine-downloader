@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name        = "wayback_machine_downloader_straw"
-  s.version     = "2.4.1"
+  s.version     = "2.4.2"
   s.executables << "wayback_machine_downloader"
   s.summary     = "Download an entire website from the Wayback Machine."
   s.description = "Download complete websites from the Internet Archive's Wayback Machine. While the Wayback Machine (archive.org) excellently preserves web history, it lacks a built-in export functionality; this gem does just that, allowing you to download entire archived websites. (This is a significant rewrite of the original wayback_machine_downloader gem by hartator, with enhanced features and performance improvements.)"
