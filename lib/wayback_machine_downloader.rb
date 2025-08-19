@@ -117,7 +117,7 @@ class WaybackMachineDownloader
   include ArchiveAPI
   include SubdomainProcessor
 
-  VERSION = "2.4.2"
+  VERSION = "2.4.3"
   DEFAULT_TIMEOUT = 30
   MAX_RETRIES = 3
   RETRY_DELAY = 2
