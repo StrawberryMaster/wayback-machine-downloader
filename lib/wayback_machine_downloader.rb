@@ -776,7 +776,8 @@ class WaybackMachineDownloader
     
   # safely sanitize a file id (or id+timestamp)
   def sanitize_and_prepare_id(raw, file_url)
-    return nil if raw.nil? || raw.empty?
+    return nil if raw.nil?
+    return ""  if raw.empty?
     original = raw.dup
     begin
       # work on a binary copy to avoid premature encoding errors
