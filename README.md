@@ -9,7 +9,7 @@ Included here is partial content from other forks, namely those @ [ShiftaDeband]
 
 Download a website's latest snapshot:
 ```bash
-ruby wayback_machine_downloader https://example.com
+wayback_machine_downloader https://example.com
 ```
 Your files will save to `./websites/example.com/` with their original structure preserved.
 
@@ -27,6 +27,7 @@ To run most commands, just like in the original WMD, you can use:
 ```bash
 wayback_machine_downloader https://example.com
 ```
+Do note that you can also manually download this repository and run commands here by appending `ruby` before a command, e.g. `ruby wayback_machine_downloader https://example.com`.
 **Note**: this gem may conflict with hartator's wayback_machine_downloader gem, and so you may have to uninstall it for this WMD fork to work. A good way to know is if a command fails; it will list the gem version as 2.3.1 or earlier, while this WMD fork uses 2.3.2 or above.
 
 ### Step-by-step setup
@@ -63,15 +64,14 @@ docker build -t wayback_machine_downloader .
 docker run -it --rm wayback_machine_downloader [options] URL
 ```
 
-or the example without cloning the repo - fetching smallrockets.com until the year 2013:
+As an example of how this works without cloning this repo, this command fetches smallrockets.com until the year 2013:
 
 ```bash
 docker run -v .:/websites ghcr.io/strawberrymaster/wayback-machine-downloader:master wayback_machine_downloader --to 20130101 smallrockets.com
 ```
 
 ### 🐳 Using Docker Compose
-
-We can also use it with Docker Compose, which provides a lot of benefits for extending more functionalities (such as implementing storing previous downloads in a database):
+You can also use Docker Compose, which provides a lot of benefits for extending more functionalities (such as implementing storing previous downloads in a database):
 ```yaml
 # docker-compose.yml
 services:
@@ -120,6 +120,7 @@ STATE_DB_FILENAME = '.downloaded.txt'  # Tracks completed downloads
 | `-t TS`, `--to TS`  | Stop at timestamp |
 | `-e`, `--exact-url`     | Download exact URL only |
 | `-r`, `--rewritten`     | Download rewritten Wayback Archive files only |
+| `-rt`, `--retry NUM` | Number of tries in case a download fails (default: 1) |
 
 **Example** - Download files to `downloaded-backup` folder
 ```bash
@@ -165,6 +166,8 @@ ruby wayback_machine_downloader https://example.com --rewritten
 ```
 Useful if you want to download the rewritten files from the Wayback Machine instead of the original ones.
 
+---
+
 ### Filtering Content
 | Option | Description |
 |--------|-------------|
@@ -199,6 +202,8 @@ Or if you want to download everything except images:
 ruby wayback_machine_downloader https://example.com --exclude "/\.(gif|jpg|jpeg)$/i"
 ```
 
+---
+
 ### Performance
 | Option | Description |
 |--------|-------------|
@@ -217,6 +222,8 @@ ruby wayback_machine_downloader https://example.com --snapshot-pages 300
 ```
 Will specify the maximum number of snapshot pages to consider. Count an average of 150,000 snapshots per page. 100 is the default maximum number of snapshot pages and should be sufficient for most websites. Use a bigger number if you want to download a very large website.
 
+---
+
 ### Diagnostics
 | Option | Description |
 |--------|-------------|
@@ -234,6 +241,8 @@ By default, Wayback Machine Downloader limits itself to files that responded wit
 ruby wayback_machine_downloader https://example.com --list
 ```
 It will just display the files to be downloaded with their snapshot timestamps and urls. The output format is JSON. It won't download anything. It's useful for debugging or to connect to another application.
+
+---
 
 ### Job management
 The downloader automatically saves its progress (`.cdx.json` for snapshot list, `.downloaded.txt` for completed files) in the output directory. If you run the same command again pointing to the same output directory, it will resume where it left off, skipping already downloaded files.
@@ -257,6 +266,8 @@ This is useful if you suspect the state files are corrupted or want to ensure a 
 ruby wayback_machine_downloader https://example.com --keep
 ```
 This can be useful for debugging or if you plan to extend the download later with different parameters (e.g., adding `--to` timestamp) while leveraging the existing snapshot list.
+
+---
 
 ## 🤝 Contributing
 1. Fork the repository

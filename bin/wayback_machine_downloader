@@ -74,6 +74,10 @@ option_parser = OptionParser.new do |opts|
     options[:keep] = true
   end
 
+  opts.on("--rt", "--retry N", Integer, "Maximum number of retries for failed downloads (default: 3)") do |t|
+    options[:max_retries] = t
+  end
+
   opts.on("--recursive-subdomains", "Recursively download content from subdomains") do |t|
     options[:recursive_subdomains] = true
   end
