@@ -11,6 +11,7 @@ require 'concurrent-ruby'
 require 'logger'
 require 'zlib'
 require 'stringio'
+require 'digest'
 require_relative 'wayback_machine_downloader/tidy_bytes'
 require_relative 'wayback_machine_downloader/to_regex'
 require_relative 'wayback_machine_downloader/archive_api'
@@ -116,7 +117,7 @@ class WaybackMachineDownloader
   include ArchiveAPI
   include SubdomainProcessor
 
-  VERSION = "2.4.0"
+  VERSION = "2.4.4"
   DEFAULT_TIMEOUT = 30
   MAX_RETRIES = 3
   RETRY_DELAY = 2
@@ -162,6 +163,7 @@ class WaybackMachineDownloader
     @recursive_subdomains = params[:recursive_subdomains] || false
     @subdomain_depth = params[:subdomain_depth] || 1
     @snapshot_at = params[:snapshot_at] ? params[:snapshot_at].to_i : nil
+    @max_retries = params[:max_retries] ? params[:max_retries].to_i : MAX_RETRIES
 
     # URL for rejecting invalid/unencoded wayback urls
     @url_regexp = /^(([A-Za-z][A-Za-z0-9+.-]*):((\/\/(((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=]))+)(:([0-9]*))?)(((\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)))|((\/(((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)+)(\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)?))|((((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)+)(\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)))(\?((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)|\/|\?)*)?(\#((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)|\/|\?)*)?)$/
@@ -171,12 +173,19 @@ class WaybackMachineDownloader
 
   def backup_name
     url_to_process = @base_url.end_with?('/*') ? @base_url.chomp('/*') : @base_url
-    
-    if url_to_process.include? '//'
+    raw = if url_to_process.include?('//')
       url_to_process.split('/')[2]
     else
       url_to_process
     end
+
+    # sanitize for Windows (and safe cross-platform) to avoid ENOTDIR on mkdir (colon in host:port)
+    if Gem.win_platform?
+      raw = raw.gsub(/[:*?"<>|]/, '_')
+      raw = raw.gsub(/[ .]+\z/, '')
+    end
+    raw = 'site' if raw.nil? || raw.empty?
+    raw
   end
 
   def backup_path
@@ -340,15 +349,15 @@ class WaybackMachineDownloader
     get_all_snapshots_to_consider.each do |file_timestamp, file_url|
       next unless file_url.include?('/')
       next if file_timestamp.to_i > target_timestamp
-      file_id = file_url.split('/')[3..-1].join('/')
-      file_id = CGI::unescape file_id
-      file_id = file_id.tidy_bytes unless file_id == ""
+
+      raw_tail = file_url.split('/')[3..-1]&.join('/')
+      file_id = sanitize_and_prepare_id(raw_tail, file_url)
       next if file_id.nil?
       next if match_exclude_filter(file_url)
       next unless match_only_filter(file_url)
-      # Select the most recent version <= target_timestamp
+
       if !file_versions[file_id] || file_versions[file_id][:timestamp].to_i < file_timestamp.to_i
-        file_versions[file_id] = {file_url: file_url, timestamp: file_timestamp, file_id: file_id}
+        file_versions[file_id] = { file_url: file_url, timestamp: file_timestamp, file_id: file_id }
       end
     end
     file_versions.values
@@ -368,22 +377,27 @@ class WaybackMachineDownloader
     file_list_curated = Hash.new
     get_all_snapshots_to_consider.each do |file_timestamp, file_url|
       next unless file_url.include?('/')
-      file_id = file_url.split('/')[3..-1].join('/')
-      file_id = CGI::unescape file_id
-      file_id = file_id.tidy_bytes unless file_id == ""
+
+      raw_tail = file_url.split('/')[3..-1]&.join('/')
+      file_id = sanitize_and_prepare_id(raw_tail, file_url)
       if file_id.nil?
         puts "Malformed file url, ignoring: #{file_url}"
+        next
+      end
+
+      if file_id.include?('<') || file_id.include?('>')
+        puts "Invalid characters in file_id after sanitization, ignoring: #{file_url}"
       else
         if match_exclude_filter(file_url)
           puts "File url matches exclude filter, ignoring: #{file_url}"
-        elsif not match_only_filter(file_url)
+        elsif !match_only_filter(file_url)
           puts "File url doesn't match only filter, ignoring: #{file_url}"
         elsif file_list_curated[file_id]
           unless file_list_curated[file_id][:timestamp] > file_timestamp
-            file_list_curated[file_id] = {file_url: file_url, timestamp: file_timestamp}
+            file_list_curated[file_id] = { file_url: file_url, timestamp: file_timestamp }
           end
         else
-          file_list_curated[file_id] = {file_url: file_url, timestamp: file_timestamp}
+          file_list_curated[file_id] = { file_url: file_url, timestamp: file_timestamp }
         end
       end
     end
@@ -394,21 +408,32 @@ class WaybackMachineDownloader
     file_list_curated = Hash.new
     get_all_snapshots_to_consider.each do |file_timestamp, file_url|
       next unless file_url.include?('/')
-      file_id = file_url.split('/')[3..-1].join('/')
-      file_id_and_timestamp = [file_timestamp, file_id].join('/')
-      file_id_and_timestamp = CGI::unescape file_id_and_timestamp
-      file_id_and_timestamp = file_id_and_timestamp.tidy_bytes unless file_id_and_timestamp == ""
+
+      raw_tail = file_url.split('/')[3..-1]&.join('/')
+      file_id = sanitize_and_prepare_id(raw_tail, file_url)
       if file_id.nil?
         puts "Malformed file url, ignoring: #{file_url}"
+        next
+      end
+
+      file_id_and_timestamp_raw = [file_timestamp, file_id].join('/')
+      file_id_and_timestamp = sanitize_and_prepare_id(file_id_and_timestamp_raw, file_url)
+      if file_id_and_timestamp.nil?
+        puts "Malformed file id/timestamp combo, ignoring: #{file_url}"
+        next
+      end
+
+      if file_id_and_timestamp.include?('<') || file_id_and_timestamp.include?('>')
+        puts "Invalid characters in file_id after sanitization, ignoring: #{file_url}"
       else
         if match_exclude_filter(file_url)
           puts "File url matches exclude filter, ignoring: #{file_url}"
-        elsif not match_only_filter(file_url)
+        elsif !match_only_filter(file_url)
           puts "File url doesn't match only filter, ignoring: #{file_url}"
         elsif file_list_curated[file_id_and_timestamp]
-          puts "Duplicate file and timestamp combo, ignoring: #{file_id}" if @verbose
+          # duplicate combo, ignore silently (verbose flag not shown here)
         else
-          file_list_curated[file_id_and_timestamp] = {file_url: file_url, timestamp: file_timestamp}
+          file_list_curated[file_id_and_timestamp] = { file_url: file_url, timestamp: file_timestamp }
         end
       end
     end
@@ -749,6 +774,86 @@ class WaybackMachineDownloader
     end
     logger
   end
+    
+  # safely sanitize a file id (or id+timestamp)
+  def sanitize_and_prepare_id(raw, file_url)
+    return nil if raw.nil?
+    return ""  if raw.empty?
+    original = raw.dup
+    begin
+      # work on a binary copy to avoid premature encoding errors
+      raw = raw.dup.force_encoding(Encoding::BINARY)
+
+      # percent-decode (repeat until stable in case of double-encoding)
+      loop do
+        decoded = raw.gsub(/%([0-9A-Fa-f]{2})/) { [$1].pack('H2') }
+        break if decoded == raw
+        raw = decoded
+      end
+
+      # try tidy_bytes
+      begin
+        raw = raw.tidy_bytes
+      rescue StandardError
+        # fallback: scrub to UTF-8
+        raw = raw.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '')
+      end
+
+      # ensure UTF-8 and scrub again
+      unless raw.encoding == Encoding::UTF_8 && raw.valid_encoding?
+        raw = raw.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '')
+      end
+
+      # strip HTML/comment artifacts & control chars
+      raw.gsub!(/<!--+/, '')
+      raw.gsub!(/[\x00-\x1F]/, '')
+
+      # split query; hash it for stable short name
+      path_part, query_part = raw.split('?', 2)
+      if query_part && !query_part.empty?
+        q_digest = Digest::SHA256.hexdigest(query_part)[0, 12]
+        if path_part.include?('.')
+          pre, _sep, post = path_part.rpartition('.')
+          path_part = "#{pre}__q#{q_digest}.#{post}"
+        else
+          path_part = "#{path_part}__q#{q_digest}"
+        end
+      end
+      raw = path_part
+
+      # collapse slashes & trim leading slash
+      raw.gsub!(%r{/+}, '/')
+      raw.sub!(%r{\A/}, '')
+
+      # segment-wise sanitation
+      raw = raw.split('/').map do |segment|
+        seg = segment.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '')
+        seg = seg.gsub(/[:*?"<>|\\]/) { |c| "%#{c.ord.to_s(16).upcase}" }
+        seg = seg.gsub(/[ .]+\z/, '') if Gem.win_platform?
+        seg.empty? ? '_' : seg
+      end.join('/')
+
+      # remove any remaining angle brackets
+      raw.tr!('<>', '')
+
+      # final fallback if empty
+      raw = "file__#{Digest::SHA1.hexdigest(original)[0,10]}" if raw.nil? || raw.empty?
+
+      raw
+    rescue => e
+      @logger&.warn("Failed to sanitize file id from #{file_url}: #{e.message}")
+      # deterministic fallback – never return nil so caller won’t mark malformed
+      "file__#{Digest::SHA1.hexdigest(original)[0,10]}"
+    end
+  end
+
+  # wrap URL in parentheses if it contains characters that commonly break unquoted
+  # Windows CMD usage (e.g., &). This is only for display; user still must quote
+  # when invoking manually.
+  def safe_display_url(url)
+    return url unless url && url.match?(/[&]/)
+    "(#{url})"
+  end
 
   def download_with_retry(file_path, file_url, file_timestamp, connection, redirect_count = 0)
     retries = 0
@@ -830,9 +935,9 @@ class WaybackMachineDownloader
       end
 
     rescue StandardError => e
-      if retries < MAX_RETRIES
+      if retries < @max_retries
         retries += 1
-        @logger.warn("Retry #{retries}/#{MAX_RETRIES} for #{file_url}: #{e.message}")
+        @logger.warn("Retry #{retries}/#{@max_retries} for #{file_url}: #{e.message}")
         sleep(RETRY_DELAY * retries)
         retry
       else
