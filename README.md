@@ -218,7 +218,7 @@ Will specify the number of multiple files you want to download at the same time.
 
 **Example 2** - 300 snapshot pages:
 ```bash
-ruby wayback_machine_downloader https://example.com --snapshot-pages 300    
+ruby wayback_machine_downloader https://example.com --maximum-snapshot 300    
 ```
 Will specify the maximum number of snapshot pages to consider. Count an average of 150,000 snapshots per page. 100 is the default maximum number of snapshot pages and should be sufficient for most websites. Use a bigger number if you want to download a very large website.
 
