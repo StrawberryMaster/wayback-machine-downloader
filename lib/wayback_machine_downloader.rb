@@ -25,69 +25,81 @@ class ConnectionPool
   MAX_RETRIES = 3
 
   def initialize(size)
-    @size = size
-    @pool = Concurrent::Map.new
-    @creation_times = Concurrent::Map.new
+    @pool = SizedQueue.new(size)
+    size.times { @pool << build_connection_entry }
     @cleanup_thread = schedule_cleanup
   end
 
-  def with_connection(&block)
-    conn = acquire_connection
+  def with_connection
+    entry = acquire_connection
     begin
-      yield conn
+      yield entry[:http]
     ensure
-      release_connection(conn)
+      release_connection(entry)
     end
   end
 
   def shutdown
     @cleanup_thread&.exit
-    @pool.each_value { |conn| conn.finish if conn&.started? }
-    @pool.clear
-    @creation_times.clear
+    drain_pool { |entry| safe_finish(entry[:http]) }
   end
 
   private
 
   def acquire_connection
-    thread_id = Thread.current.object_id
-    conn = @pool[thread_id]
-
-    if should_create_new?(conn)
-      conn&.finish if conn&.started?
-      conn = create_connection
-      @pool[thread_id] = conn
-      @creation_times[thread_id] = Time.now
+    entry = @pool.pop
+    if stale?(entry)
+      safe_finish(entry[:http])
+      entry = build_connection_entry
     end
-
-    conn
+    entry
   end
 
-  def release_connection(conn)
-    return unless conn
-    if conn.started? && Time.now - @creation_times[Thread.current.object_id] > MAX_AGE
-      conn.finish
-      @pool.delete(Thread.current.object_id)
-      @creation_times.delete(Thread.current.object_id)
+  def release_connection(entry)
+    if stale?(entry)
+      safe_finish(entry[:http])
+      entry = build_connection_entry
+    end
+    @pool << entry
+  end
+
+  def stale?(entry)
+    http = entry[:http]
+    !http.started? || (Time.now - entry[:created_at] > MAX_AGE)
+  end
+
+  def build_connection_entry
+    { http: create_connection, created_at: Time.now }
+  end
+
+  def safe_finish(http)
+    http.finish if http&.started?
+  rescue StandardError
+    nil
+  end
+
+  def drain_pool
+    loop do
+      entry = begin
+        @pool.pop(true)
+      rescue ThreadError
+        break
+      end
+      yield(entry)
     end
   end
 
-  def should_create_new?(conn)
-    return true if conn.nil?
-    return true unless conn.started?
-    return true if Time.now - @creation_times[Thread.current.object_id] > MAX_AGE
-    false
-  end
-
-  def create_connection
-    http = Net::HTTP.new("web.archive.org", 443)
-    http.use_ssl = true
-    http.read_timeout = DEFAULT_TIMEOUT
-    http.open_timeout = DEFAULT_TIMEOUT
-    http.keep_alive_timeout = 30
-    http.max_retries = MAX_RETRIES
-    http.start
-    http
+  def cleanup_old_connections
+    entry = begin
+      @pool.pop(true)
+    rescue ThreadError
+      return
+    end
+    if stale?(entry)
+      safe_finish(entry[:http])
+      entry = build_connection_entry
+    end
+    @pool << entry
   end
 
   def schedule_cleanup
@@ -99,16 +111,15 @@ class ConnectionPool
     end
   end
 
-  def cleanup_old_connections
-    current_time = Time.now
-    @creation_times.each do |thread_id, creation_time|
-      if current_time - creation_time > MAX_AGE
-        conn = @pool[thread_id]
-        conn&.finish if conn&.started?
-        @pool.delete(thread_id)
-        @creation_times.delete(thread_id)
-      end
-    end
+  def create_connection
+    http = Net::HTTP.new("web.archive.org", 443)
+    http.use_ssl = true
+    http.read_timeout = DEFAULT_TIMEOUT
+    http.open_timeout = DEFAULT_TIMEOUT
+    http.keep_alive_timeout = 30
+    http.max_retries = MAX_RETRIES
+    http.start
+    http
   end
 end
 
