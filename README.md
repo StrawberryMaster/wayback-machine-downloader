@@ -269,6 +269,45 @@ This can be useful for debugging or if you plan to extend the download later wit
 
 ---
 
+## Troubleshooting
+
+### SSL certificate errors
+If you encounter an SSL error like:
+```
+SSL_connect returned=1 errno=0 state=error: certificate verify failed (unable to get certificate CRL)
+```
+
+This is a known issue with **OpenSSL 3.6.0** when used with certain Ruby installations, and not a bug with this WMD work specifically. (See [ruby/openssl#949](https://github.com/ruby/openssl/issues/949) for details.)
+
+The workaround is to create a file named `fix_ssl_store.rb` with the following content:
+```ruby
+require "openssl"
+store = OpenSSL::X509::Store.new.tap(&:set_default_paths)
+OpenSSL::SSL::SSLContext::DEFAULT_PARAMS[:cert_store] = store
+```
+
+and run wayback-machine-downloader with:
+```bash
+RUBYOPT="-r./fix_ssl_store.rb" wayback_machine_downloader "http://example.com"
+```
+
+#### Verifying the issue
+You can test if your Ruby environment has this issue by running:
+
+```ruby
+require "net/http"
+require "uri"
+
+uri = URI("https://web.archive.org/")
+Net::HTTP.start(uri.host, uri.port, use_ssl: true) do |http|
+  resp = http.get("/")
+  puts "GET / => #{resp.code}"
+end
+```
+If this fails with the same SSL error, the workaround above will fix it.
+
+---
+
 ## 🤝 Contributing
 1. Fork the repository
 2. Create a feature branch
