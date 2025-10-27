@@ -205,7 +205,8 @@ class WaybackMachineDownloader
       @directory
     else
       # ensure the default path is absolute and normalized
-      File.expand_path(File.join('websites', backup_name))
+      cwd = Dir.pwd
+      File.expand_path(File.join(cwd, 'websites', backup_name))
     end
   end
 
