@@ -67,7 +67,7 @@ docker run -it --rm wayback_machine_downloader [options] URL
 As an example of how this works without cloning this repo, this command fetches smallrockets.com until the year 2013:
 
 ```bash
-docker run -v .:/websites ghcr.io/strawberrymaster/wayback-machine-downloader:master wayback_machine_downloader --to 20130101 smallrockets.com
+docker run -v .:/build/websites ghcr.io/strawberrymaster/wayback-machine-downloader:master wayback_machine_downloader --to 20130101 smallrockets.com
 ```
 
 ### 🐳 Using Docker Compose
