@@ -127,6 +127,7 @@ class WaybackMachineDownloader
 
   include ArchiveAPI
   include SubdomainProcessor
+  include URLRewrite
 
   VERSION = "2.4.4"
   DEFAULT_TIMEOUT = 30
@@ -648,7 +649,8 @@ class WaybackMachineDownloader
     begin
       content = File.binread(file_path)
 
-      if file_ext == '.html' || file_ext == '.htm'
+      # detect encoding for HTML files
+      if file_ext == '.html' || file_ext == '.htm' || file_ext == '.php' || file_ext == '.asp'
         encoding = content.match(/<meta\s+charset=["']?([^"'>]+)/i)&.captures&.first || 'UTF-8'
         content.force_encoding(encoding) rescue content.force_encoding('UTF-8')
       else
@@ -664,13 +666,13 @@ class WaybackMachineDownloader
       # URLs in JavaScript
       content = rewrite_js_urls(content)
       
-      # for URLs in HTML attributes that start with a single slash
+      # for URLs that start with a single slash, make them relative
       content.gsub!(/(\s(?:href|src|action|data-src|data-url)=["'])\/([^"'\/][^"']*)(["'])/i) do
         prefix, path, suffix = $1, $2, $3
         "#{prefix}./#{path}#{suffix}"
       end
       
-      # for URLs in CSS that start with a single slash
+      # for URLs in CSS that start with a single slash, make them relative
       content.gsub!(/url\(\s*["']?\/([^"'\)\/][^"'\)]*?)["']?\s*\)/i) do
         path = $1
         "url(\"./#{path}\")"
