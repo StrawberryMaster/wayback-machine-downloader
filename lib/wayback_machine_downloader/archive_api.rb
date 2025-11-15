@@ -16,6 +16,10 @@ module ArchiveAPI
     params = [["output", "json"], ["url", url]] + parameters_for_api(page_index)
     request_url.query = URI.encode_www_form(params)
 
+    retries = 0
+    max_retries = (@max_retries || 3)
+    delay = WaybackMachineDownloader::RETRY_DELAY rescue 2
+
     begin
       response = http.get(request_url)
       body = response.body.to_s.strip
@@ -26,7 +30,21 @@ module ArchiveAPI
       json.shift if json.first == ["timestamp", "original"]
       json
     rescue JSON::ParserError => e
-      warn "Failed to fetch data from API: #{e.message}"
+      warn "Failed to parse JSON from API for #{url}: #{e.message}"
+      []
+    rescue Net::ReadTimeout, Net::OpenTimeout => e
+      if retries < max_retries
+        retries += 1
+        warn "Timeout talking to Wayback CDX API (#{e.class}: #{e.message}) for #{url}, retry #{retries}/#{max_retries}..."
+        sleep(delay * retries)
+        retry
+      else
+        warn "Giving up on Wayback CDX API for #{url} after #{max_retries} timeouts."
+        []
+      end
+    rescue StandardError => e
+      # treat any other transient-ish error similarly, though without retries for now
+      warn "Error fetching CDX data for #{url}: #{e.message}"
       []
     end
   end
