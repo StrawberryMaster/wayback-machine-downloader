@@ -184,18 +184,29 @@ class WaybackMachineDownloader
   end
 
   def backup_name
-    url_to_process = @base_url.end_with?('/*') ? @base_url.chomp('/*') : @base_url
+    url_to_process = @base_url
+    url_to_process = url_to_process.chomp('/*') if url_to_process&.end_with?('/*')
+
     raw = if url_to_process.include?('//')
       url_to_process.split('/')[2]
     else
       url_to_process
     end
 
+    # if it looks like a wildcard pattern, normalize to a safe host-ish name
+    if raw&.start_with?('*.')
+      raw = raw.sub(/\A\*\./, 'all-')
+    end
+
     # sanitize for Windows (and safe cross-platform) to avoid ENOTDIR on mkdir (colon in host:port)
     if Gem.win_platform?
       raw = raw.gsub(/[:*?"<>|]/, '_')
       raw = raw.gsub(/[ .]+\z/, '')
+    else
+      # still good practice to strip path separators (and maybe '*' for POSIX too)
+      raw = raw.gsub(/[\/:*?"<>|]/, '_')
     end
+
     raw = 'site' if raw.nil? || raw.empty?
     raw
   end
