@@ -694,30 +694,48 @@ class WaybackMachineDownloader
     return unless File.exist?(file_path)
     
     content = File.read(file_path)
-    # handle encoding slightly roughly for extraction
     content = content.force_encoding('UTF-8').scrub
     
     assets = PageRequisites.extract(content)
     
-    parent_url = parent_remote_info[:file_url]
+    # FIX 1: Construct a valid URI object including the scheme (http://)
+    # parent_remote_info[:file_url] is usually "www.iana.org/path", 
+    # we need "http://www.iana.org/path" to resolve relative paths correctly.
+    parent_raw = parent_remote_info[:file_url]
+    parent_raw = "http://#{parent_raw}" unless parent_raw.match?(/^https?:\/\//)
+
+    begin
+      base_uri = URI(parent_raw)
+    rescue URI::InvalidURIError
+      return
+    end
+    
     parent_timestamp = parent_remote_info[:timestamp]
     
     assets.each do |asset_rel_url|
-      # resolve absolute URL
       begin
-        # assume relative to the parent file URL
-        # We need a fake base URI to resolve /paths and ../paths
-        base_uri = URI("http://base.example.com/" + parent_url)
+        # resolve the relative asset URL against the parent page URL
+        # e.g. parent: http://www.iana.org/help/ex
+        #      asset:  /static/style.css
+        #      result: http://www.iana.org/static/style.css
         resolved_uri = base_uri + asset_rel_url
         
-        # we only want the path part + query, not the host
-        asset_final_url = resolved_uri.path
-        asset_final_url = asset_final_url[1..-1] if asset_final_url.start_with?('/') # strip leading slash
+        # filter out navigation links
+        # If the path has no extension (like /domains) or is .html, it's likely a link and not a requisite
+        # this prevents spidering the whole site
+        path = resolved_uri.path
+        ext = File.extname(path).downcase
         
-        # re-attach query string if present (as some assets use ?v=123)
+        # skip empty extensions and standard page extensions
+        if ext.empty? || ['.html', '.htm', '.php', '.asp', '.aspx'].include?(ext)
+           next 
+        end
+
+        # reconstruct the ID expected by Wayback Machine
+        asset_final_url = resolved_uri.host + resolved_uri.path
         asset_final_url += "?#{resolved_uri.query}" if resolved_uri.query
         
-      rescue URI::InvalidURIError
+      rescue URI::InvalidURIError, StandardError
         next
       end
 
