@@ -15,6 +15,7 @@ require 'digest'
 require_relative 'wayback_machine_downloader/tidy_bytes'
 require_relative 'wayback_machine_downloader/to_regex'
 require_relative 'wayback_machine_downloader/archive_api'
+require_relative 'wayback_machine_downloader/page_requisites'
 require_relative 'wayback_machine_downloader/subdom_processor'
 require_relative 'wayback_machine_downloader/url_rewrite'
 
@@ -129,7 +130,7 @@ class WaybackMachineDownloader
   include SubdomainProcessor
   include URLRewrite
 
-  VERSION = "2.4.4"
+  VERSION = "2.4.5"
   DEFAULT_TIMEOUT = 30
   MAX_RETRIES = 3
   RETRY_DELAY = 2
@@ -143,7 +144,7 @@ class WaybackMachineDownloader
   attr_accessor :base_url, :exact_url, :directory, :all_timestamps,
     :from_timestamp, :to_timestamp, :only_filter, :exclude_filter,
     :all, :maximum_pages, :threads_count, :logger, :reset, :keep, :rewrite,
-    :snapshot_at
+    :snapshot_at, :page_requisites
 
   def initialize params
     validate_params(params)
@@ -176,6 +177,8 @@ class WaybackMachineDownloader
     @subdomain_depth = params[:subdomain_depth] || 1
     @snapshot_at = params[:snapshot_at] ? params[:snapshot_at].to_i : nil
     @max_retries = params[:max_retries] ? params[:max_retries].to_i : MAX_RETRIES
+    @page_requisites = params[:page_requisites] || false
+    @pending_jobs = Concurrent::AtomicFixnum.new(0)
 
     # URL for rejecting invalid/unencoded wayback urls
     @url_regexp = /^(([A-Za-z][A-Za-z0-9+.-]*):((\/\/(((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=]))+)(:([0-9]*))?)(((\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)))|((\/(((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)+)(\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)?))|((((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)+)(\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)))(\?((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)|\/|\?)*)?(\#((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)|\/|\?)*)?)$/
@@ -561,7 +564,7 @@ class WaybackMachineDownloader
       end
     end
   end
-
+  
   def download_files
     start_time = Time.now
     puts "Downloading #{@base_url} to #{backup_path} from Wayback Machine archives."
@@ -582,6 +585,12 @@ class WaybackMachineDownloader
 
     # Load IDs of already downloaded files
     downloaded_ids = load_downloaded_ids
+    
+    # We use a thread-safe Set to track what we have queued/downloaded in this session
+    # to avoid infinite loops with page requisites
+    @session_downloaded_ids = Concurrent::Set.new
+    downloaded_ids.each { |id| @session_downloaded_ids.add(id) }
+
     files_to_process = files_to_download.reject do |file_info|
       downloaded_ids.include?(file_info[:file_id])
     end
@@ -592,8 +601,8 @@ class WaybackMachineDownloader
     if skipped_count > 0
       puts "Found #{skipped_count} previously downloaded files, skipping them."
     end
-
-    if remaining_count == 0
+    
+    if remaining_count == 0 && !@page_requisites
       puts "All matching files have already been downloaded."
       cleanup
       return
@@ -606,12 +615,22 @@ class WaybackMachineDownloader
     @download_mutex = Mutex.new
 
     thread_count = [@threads_count, CONNECTION_POOL_SIZE].min
-    pool = Concurrent::FixedThreadPool.new(thread_count)
+    @worker_pool = Concurrent::FixedThreadPool.new(thread_count)
 
-    processing_files(pool, files_to_process)
+    # initial batch
+    files_to_process.each do |file_remote_info|
+      @session_downloaded_ids.add(file_remote_info[:file_id])
+      submit_download_job(file_remote_info)
+    end
 
-    pool.shutdown
-    pool.wait_for_termination
+    # wait for all jobs to finish
+    loop do
+      sleep 0.5
+      break if @pending_jobs.value == 0
+    end
+
+    @worker_pool.shutdown
+    @worker_pool.wait_for_termination
 
     end_time = Time.now
     puts "\nDownload finished in #{(end_time - start_time).round(2)}s."
@@ -627,6 +646,105 @@ class WaybackMachineDownloader
 
     puts "Results saved in #{backup_path}"
     cleanup
+  end
+
+  # helper to submit jobs and increment the counter
+  def submit_download_job(file_remote_info)
+    @pending_jobs.increment
+    @worker_pool.post do
+      begin
+        process_single_file(file_remote_info)
+      ensure
+        @pending_jobs.decrement
+      end
+    end
+  end
+
+  def process_single_file(file_remote_info)
+    download_success = false
+    downloaded_path = nil
+    
+    @connection_pool.with_connection do |connection|
+      result_message, path = download_file(file_remote_info, connection)
+      downloaded_path = path
+      
+      if result_message && result_message.include?(' -> ')
+         download_success = true
+      end
+      
+      @download_mutex.synchronize do
+        @processed_file_count += 1 if @processed_file_count < @total_to_download
+        # only print if it's a "User" file or a requisite we found
+        puts result_message if result_message
+      end
+    end
+
+    if download_success
+      append_to_db(file_remote_info[:file_id])
+      
+      if @page_requisites && downloaded_path && File.extname(downloaded_path) =~ /\.(html?|php|asp|aspx|jsp)$/i
+        process_page_requisites(downloaded_path, file_remote_info)
+      end
+    end
+  rescue => e
+    @logger.error("Error processing file #{file_remote_info[:file_url]}: #{e.message}")
+  end
+  
+  def process_page_requisites(file_path, parent_remote_info)
+    return unless File.exist?(file_path)
+    
+    content = File.read(file_path)
+    # handle encoding slightly roughly for extraction
+    content = content.force_encoding('UTF-8').scrub
+    
+    assets = PageRequisites.extract(content)
+    
+    parent_url = parent_remote_info[:file_url]
+    parent_timestamp = parent_remote_info[:timestamp]
+    
+    assets.each do |asset_rel_url|
+      # resolve absolute URL
+      begin
+        # assume relative to the parent file URL
+        # We need a fake base URI to resolve /paths and ../paths
+        base_uri = URI("http://base.example.com/" + parent_url)
+        resolved_uri = base_uri + asset_rel_url
+        
+        # we only want the path part + query, not the host
+        asset_final_url = resolved_uri.path
+        asset_final_url = asset_final_url[1..-1] if asset_final_url.start_with?('/') # strip leading slash
+        
+        # re-attach query string if present (as some assets use ?v=123)
+        asset_final_url += "?#{resolved_uri.query}" if resolved_uri.query
+        
+      rescue URI::InvalidURIError
+        next
+      end
+
+      # sanitize ID
+      asset_id = sanitize_and_prepare_id(asset_final_url, asset_final_url)
+      
+      # queue if not already queued
+      # @note: we use the PARENT timestamp here. WBM usually redirects 
+      # to the closest available timestamp if the exact one doesn't exist
+      unless @session_downloaded_ids.include?(asset_id)
+        @session_downloaded_ids.add(asset_id)
+        
+        # construct info hash
+        new_file_info = {
+          file_url: asset_final_url,
+          timestamp: parent_timestamp,
+          file_id: asset_id
+        }
+        
+        @download_mutex.synchronize do
+          @total_to_download += 1
+          puts "Queued requisite: #{asset_final_url}"
+        end
+        
+        submit_download_job(new_file_info)
+      end
+    end
   end
 
   def structure_dir_path dir_path
@@ -736,7 +854,7 @@ class WaybackMachineDownloader
     # check existence *before* download attempt
     # this handles cases where a file was created manually or by a previous partial run without a .db entry
     if File.exist? file_path
-       return "#{file_url} # #{file_path} already exists. (#{@processed_file_count + 1}/#{@total_to_download})"
+       return ["#{file_url} # #{file_path} already exists. (#{@processed_file_count + 1}/#{@total_to_download})", file_path]
     end
 
     begin
@@ -748,13 +866,13 @@ class WaybackMachineDownloader
         if @rewrite && File.extname(file_path) =~ /\.(html?|css|js)$/i
           rewrite_urls_to_relative(file_path)
         end
-        "#{file_url} -> #{file_path} (#{@processed_file_count + 1}/#{@total_to_download})"
+        return ["#{file_url} -> #{file_path} (#{@processed_file_count + 1}/#{@total_to_download})", file_path]
       when :skipped_not_found
-        "Skipped (not found): #{file_url} (#{@processed_file_count + 1}/#{@total_to_download})"
+        return ["Skipped (not found): #{file_url} (#{@processed_file_count + 1}/#{@total_to_download})", nil]
       else
         # ideally, this case should not be reached if download_with_retry behaves as expected.
         @logger.warn("Unknown status from download_with_retry for #{file_url}: #{status}")
-        "Unknown status for #{file_url}: #{status} (#{@processed_file_count + 1}/#{@total_to_download})"
+        return ["Unknown status for #{file_url}: #{status} (#{@processed_file_count + 1}/#{@total_to_download})", nil]
       end
     rescue StandardError => e
       msg = "Failed: #{file_url} # #{e} (#{@processed_file_count + 1}/#{@total_to_download})"
@@ -762,7 +880,7 @@ class WaybackMachineDownloader
         File.delete(file_path)
         msg += "\n#{file_path} was empty and was removed."
       end
-      msg
+      return [msg, nil]
     end
   end
 

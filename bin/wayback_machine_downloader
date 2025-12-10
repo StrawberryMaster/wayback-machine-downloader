@@ -86,6 +86,10 @@ option_parser = OptionParser.new do |opts|
     options[:subdomain_depth] = t
   end
 
+  opts.on("--page-requisites", "Download related assets (images, css, js) for downloaded HTML pages") do |t|
+    options[:page_requisites] = true
+  end
+
   opts.on("-v", "--version", "Display version") do |t|
     options[:version] = t
   end
