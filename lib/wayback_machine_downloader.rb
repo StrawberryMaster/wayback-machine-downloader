@@ -692,74 +692,76 @@ class WaybackMachineDownloader
   
   def process_page_requisites(file_path, parent_remote_info)
     return unless File.exist?(file_path)
-    
+
     content = File.read(file_path)
     content = content.force_encoding('UTF-8').scrub
-    
+
     assets = PageRequisites.extract(content)
-    
-    # FIX 1: Construct a valid URI object including the scheme (http://)
-    # parent_remote_info[:file_url] is usually "www.iana.org/path", 
-    # we need "http://www.iana.org/path" to resolve relative paths correctly.
+
+    # prepare base URI for resolving relative paths
     parent_raw = parent_remote_info[:file_url]
     parent_raw = "http://#{parent_raw}" unless parent_raw.match?(/^https?:\/\//)
-
+    
     begin
       base_uri = URI(parent_raw)
+      # calculate the "root" host of the site we are downloading to compare later
+      current_project_host = URI("http://" + @base_url.gsub(%r{^https?://}, '')).host
     rescue URI::InvalidURIError
       return
     end
-    
+
     parent_timestamp = parent_remote_info[:timestamp]
-    
+
     assets.each do |asset_rel_url|
       begin
-        # resolve the relative asset URL against the parent page URL
-        # e.g. parent: http://www.iana.org/help/ex
-        #      asset:  /static/style.css
-        #      result: http://www.iana.org/static/style.css
+        # resolve full URL (handles relative paths like "../img/logo.png")
         resolved_uri = base_uri + asset_rel_url
-        
-        # filter out navigation links
-        # If the path has no extension (like /domains) or is .html, it's likely a link and not a requisite
-        # this prevents spidering the whole site
+
+        # filter out navigation links (pages) vs assets
+        # skip if extension is empty or looks like an HTML page
         path = resolved_uri.path
         ext = File.extname(path).downcase
-        
-        # skip empty extensions and standard page extensions
         if ext.empty? || ['.html', '.htm', '.php', '.asp', '.aspx'].include?(ext)
            next 
         end
 
-        # reconstruct the ID expected by Wayback Machine
-        asset_final_url = resolved_uri.host + resolved_uri.path
-        asset_final_url += "?#{resolved_uri.query}" if resolved_uri.query
-        
+        # construct the URL for the Wayback API
+        asset_wbm_url = resolved_uri.host + resolved_uri.path
+        asset_wbm_url += "?#{resolved_uri.query}" if resolved_uri.query
+
+        # construct the local file ID
+        #  if the asset is on the SAME domain, strip the domain from the folder path
+        #  if it's on a DIFFERENT domain (e.g. cdn.jquery.com), keep the domain folder
+        if resolved_uri.host == current_project_host
+           # e.g. /static/css/style.css
+           asset_file_id = resolved_uri.path
+           asset_file_id = asset_file_id[1..-1] if asset_file_id.start_with?('/')
+        else
+           # e.g. cdn.google.com/jquery.js
+           asset_file_id = asset_wbm_url
+        end
+
       rescue URI::InvalidURIError, StandardError
         next
       end
 
-      # sanitize ID
-      asset_id = sanitize_and_prepare_id(asset_final_url, asset_final_url)
-      
-      # queue if not already queued
-      # @note: we use the PARENT timestamp here. WBM usually redirects 
-      # to the closest available timestamp if the exact one doesn't exist
+      # sanitize and queue
+      asset_id = sanitize_and_prepare_id(asset_file_id, asset_wbm_url)
+
       unless @session_downloaded_ids.include?(asset_id)
         @session_downloaded_ids.add(asset_id)
-        
-        # construct info hash
+
         new_file_info = {
-          file_url: asset_final_url,
+          file_url: asset_wbm_url,
           timestamp: parent_timestamp,
           file_id: asset_id
         }
-        
+
         @download_mutex.synchronize do
           @total_to_download += 1
-          puts "Queued requisite: #{asset_final_url}"
+          puts "Queued requisite: #{asset_file_id}"
         end
-        
+
         submit_download_job(new_file_info)
       end
     end
