@@ -717,6 +717,19 @@ class WaybackMachineDownloader
         # resolve full URL (handles relative paths like "../img/logo.png")
         resolved_uri = base_uri + asset_rel_url
 
+        # detect if the asset URL is already a Wayback "web/<timestamp>/.../https://..." embed
+        asset_timestamp = parent_timestamp
+        if resolved_uri.path =~ %r{\A/web/([0-9]{4,})[^/]*/(https?://.+)\z}
+          embedded_ts = $1
+          begin
+            orig_uri = URI($2)
+            resolved_uri = orig_uri
+            asset_timestamp = embedded_ts.to_i
+          rescue URI::InvalidURIError
+            # fall back to original resolved_uri and parent timestamp
+          end
+        end
+
         # filter out navigation links (pages) vs assets
         # skip if extension is empty or looks like an HTML page
         path = resolved_uri.path
@@ -753,7 +766,7 @@ class WaybackMachineDownloader
 
         new_file_info = {
           file_url: asset_wbm_url,
-          timestamp: parent_timestamp,
+          timestamp: asset_timestamp,
           file_id: asset_id
         }
 
