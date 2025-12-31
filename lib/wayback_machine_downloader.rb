@@ -328,7 +328,11 @@ class WaybackMachineDownloader
 
           futures.each do |future|
             begin
-              results << future.value
+              val = future.value
+              # only append if valid
+              if val && val.is_a?(Array) && val.first.is_a?(Integer)
+                results << val
+              end
             rescue => e
               puts "\nError fetching page #{future}: #{e.message}"
             end
