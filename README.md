@@ -121,6 +121,9 @@ STATE_DB_FILENAME = '.downloaded.txt'  # Tracks completed downloads
 | `-e`, `--exact-url`     | Download exact URL only |
 | `-r`, `--rewritten`     | Download rewritten Wayback Archive files only |
 | `-rt`, `--retry NUM` | Number of tries in case a download fails (default: 1) |
+| `--recursive-subdomains` | Scan downloaded HTML/CSS/JS for subdomains of the base domain and download them too |
+| `--subdomain-depth N` | How many discovery rounds to perform when recursively pulling subdomains |
+| `--rewrite` | Rewrite HTML/CSS/JS to use local relative links |
 
 **Example** - Download files to `downloaded-backup` folder
 ```bash
@@ -166,9 +169,39 @@ ruby wayback_machine_downloader https://example.com --rewritten
 ```
 Useful if you want to download the rewritten files from the Wayback Machine instead of the original ones.
 
+**Example 7** – grab a site and any discovered subdomains one level deep, rewriting links locally:
+```bash
+ruby wayback_machine_downloader https://example.com --recursive-subdomains --subdomain-depth 1 --rewrite
+```
+
 ---
 
-### Filtering Content
+### Page requisites
+| Option | Description |
+|--------|-------------|
+| `--page-requisites` | After an HTML page is saved, enqueue its linked assets (CSS/JS/images) from the same host for download |
+
+**Example** – download pages plus their referenced assets:
+```bash
+wayback_machine_downloader https://example.com --page-requisites
+```
+Useful if WMD did not download all the content you wanted.
+
+---
+
+### Composite snapshot at a point in time
+| Option | Description |
+|--------|-------------|
+| `--snapshot-at TS` | Build a “best effort” snapshot at timestamp `TS` by picking the newest version of each file at or before `TS` (e.g., `20130101000000`). |
+
+**Example** – freeze the site as of Jan 1, 2013:
+```bash
+wayback_machine_downloader https://example.com --snapshot-at 20130101000000
+```
+
+---
+
+### Filtering content
 | Option | Description |
 |--------|-------------|
 | `-o FILTER`, `--only FILTER` | Only download matching URLs (supports regex) |
