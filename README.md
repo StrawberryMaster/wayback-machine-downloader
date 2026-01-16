@@ -123,7 +123,7 @@ STATE_DB_FILENAME = '.downloaded.txt'  # Tracks completed downloads
 | `-rt`, `--retry NUM` | Number of tries in case a download fails (default: 1) |
 | `--recursive-subdomains` | Scan downloaded HTML/CSS/JS for subdomains of the base domain and download them too |
 | `--subdomain-depth N` | How many discovery rounds to perform when recursively pulling subdomains |
-| `--rewrite` | Rewrite HTML/CSS/JS to use local relative links |
+| `--local` | Rewrite HTML/CSS/JS to use local relative links |
 
 **Example** - Download files to `downloaded-backup` folder
 ```bash
@@ -171,7 +171,7 @@ Useful if you want to download the rewritten files from the Wayback Machine inst
 
 **Example 7** – grab a site and any discovered subdomains one level deep, rewriting links locally:
 ```bash
-ruby wayback_machine_downloader https://example.com --recursive-subdomains --subdomain-depth 1 --rewrite
+ruby wayback_machine_downloader https://example.com --recursive-subdomains --subdomain-depth 1 --local
 ```
 
 ---
