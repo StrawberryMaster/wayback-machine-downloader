@@ -78,6 +78,10 @@ option_parser = OptionParser.new do |opts|
     options[:max_retries] = t
   end
 
+  opts.on("--snapshot-at TIMESTAMP", Integer, "Build a composite snapshot at this timestamp") do |t|
+    options[:snapshot_at] = t
+  end
+
   opts.on("--recursive-subdomains", "Recursively download content from subdomains") do |t|
     options[:recursive_subdomains] = true
   end
