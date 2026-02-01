@@ -1054,8 +1054,15 @@ class WaybackMachineDownloader
         "https://web.archive.org/web/#{file_timestamp}id_/#{file_url}"
       end
 
-      # Escape square brackets because they are not valid in URI()
-      wayback_url = wayback_url.gsub('[', '%5B').gsub(']', '%5D')
+      # Escape characters that are not valid in URI()
+      wayback_url = wayback_url.gsub(' ', '%20').gsub('[', '%5B').gsub(']', '%5D')
+
+      # check for Windows path length limit
+      if Gem.win_platform? && file_path.length > 255
+        @logger.warn("Skipped #{file_url}: Path too long for Windows (#{file_path.length} chars)")
+        @failed_downloads << {url: file_url, error: "Path too long for Windows"}
+        return :skipped_not_found
+      end
 
       # reject invalid/unencoded wayback_url, behaving as if the resource weren't found
       if not @url_regexp.match?(wayback_url)
@@ -1109,7 +1116,7 @@ class WaybackMachineDownloader
           save_response_body.call
           return :saved
         when Net::HTTPRedirection
-          raise "Too many redirects for #{file_url}" if redirect_count >= 2
+          raise "Too many redirects for #{file_url}" if redirect_count >= 5
           location = response['location']
           @logger.warn("Redirect found for #{file_url} -> #{location}")
           return download_with_retry(file_path, location, file_timestamp, connection, redirect_count + 1)

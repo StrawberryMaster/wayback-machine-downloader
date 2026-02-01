@@ -21,11 +21,19 @@ module ArchiveAPI
     delay = WaybackMachineDownloader::RETRY_DELAY rescue 2
 
     begin
-      response = http.get(request_url)
+      request = Net::HTTP::Get.new(request_url)
+      request["User-Agent"] = "wmd-straw/#{WaybackMachineDownloader::VERSION}"
+      request["Connection"] = "keep-alive"
+      request["Accept-Encoding"] = "gzip"
+      response = http.request(request)
 
       case response.code.to_i
       when 200
-        body = response.body.to_s.strip
+        body = if response['content-encoding'] == 'gzip'
+          Zlib::GzipReader.new(StringIO.new(response.body)).read
+        else
+          response.body.to_s.strip
+        end
         return [] if body.empty?
         begin
           json = JSON.parse(body)
@@ -55,7 +63,7 @@ module ArchiveAPI
   end
 
   def parameters_for_api(page_index)
-    parameters = [["fl", "timestamp,original"], ["collapse", "digest"], ["gzip", "false"]]
+    parameters = [["fl", "timestamp,original"], ["collapse", "digest"], ["gzip", "true"]]
     parameters.push(["filter", "statuscode:200"]) unless @all
     parameters.push(["from", @from_timestamp.to_s]) if @from_timestamp && @from_timestamp != 0
     parameters.push(["to", @to_timestamp.to_s]) if @to_timestamp && @to_timestamp != 0
