@@ -27,7 +27,7 @@ class ConnectionPool
 
   def initialize(size)
     @pool = SizedQueue.new(size)
-    size.times { @pool << build_connection_entry }
+    size.times { @pool << nil }
     @cleanup_thread = schedule_cleanup
   end
 
@@ -42,29 +42,32 @@ class ConnectionPool
 
   def shutdown
     @cleanup_thread&.exit
-    drain_pool { |entry| safe_finish(entry[:http]) }
+    drain_pool do |entry|
+      safe_finish(entry[:http]) if entry
+    end
   end
 
   private
 
   def acquire_connection
     entry = @pool.pop
-    if stale?(entry)
-      safe_finish(entry[:http])
+    if entry.nil? || stale?(entry)
+      safe_finish(entry[:http]) if entry
       entry = build_connection_entry
     end
     entry
   end
 
   def release_connection(entry)
-    if stale?(entry)
+    if entry && stale?(entry)
       safe_finish(entry[:http])
-      entry = build_connection_entry
+      entry = nil
     end
     @pool << entry
   end
 
   def stale?(entry)
+    return true if entry.nil? || entry[:http].nil?
     http = entry[:http]
     !http.started? || (Time.now - entry[:created_at] > MAX_AGE)
   end
@@ -96,9 +99,9 @@ class ConnectionPool
     rescue ThreadError
       return
     end
-    if stale?(entry)
+    if entry && stale?(entry)
       safe_finish(entry[:http])
-      entry = build_connection_entry
+      entry = nil
     end
     @pool << entry
   end
@@ -292,17 +295,18 @@ class WaybackMachineDownloader
 
     # Fetch the initial set of snapshots, sequentially
     @connection_pool.with_connection do |connection|
-      initial_list = get_raw_list_from_api(@base_url, nil, connection)
+      initial_list = get_raw_list_from_api(@base_url, 0, connection)
       initial_list ||= []
       mutex.synchronize do
         snapshot_list_to_consider.concat(initial_list)
         print "."
+        $stdout.flush
       end
     end
 
-    # Fetch additional pages if the exact URL flag is not set
-    unless @exact_url
-      page_index = 0
+    # Fetch additional pages if the exact URL flag is not set and the first page wasn't empty
+    unless @exact_url || snapshot_list_to_consider.empty?
+      page_index = 1
       batch_size = [@threads_count, 5].min
       continue_fetching = true
       fetch_pool = Concurrent::FixedThreadPool.new([@threads_count, 1].max)
@@ -350,6 +354,7 @@ class WaybackMachineDownloader
               mutex.synchronize do
                 snapshot_list_to_consider.concat(result)
                 print "."
+                $stdout.flush
               end
             end
           end

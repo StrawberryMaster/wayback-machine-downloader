@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 
+$stdout.sync = true
+
 require_relative '../lib/wayback_machine_downloader'
 require 'optparse'
 require 'pp'
