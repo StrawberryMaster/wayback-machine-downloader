@@ -1,10 +1,6 @@
 # wmd-straw
 [![version](https://badge.fury.io/rb/wayback_machine_downloader_straw.svg)](https://rubygems.org/gems/wayback_machine_downloader_straw)
-[! [Docker Pulls](https://img.shields.io/docker/pulls/ghcr.io/strawberrymaster/wayback-machine-downloader.svg)](https://hub.docker.com/r/ghcr.io/strawberrymaster/wayback-machine-downloader)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub issues](https://img.shields.io/github/issues/StrawberryMaster/wayback-machine-downloader.svg)](https://github.com/StrawberryMaster/wayback-machine-downloader/issues)
-[! 
-
 
 This is **wmd-straw** (or wayback-machine-downloader-straw), a fork of the [Wayback Machine Downloader](https://github.com/hartator/wayback-machine-downloader). With this, you can download a website from the Internet Archive Wayback Machine.
 
