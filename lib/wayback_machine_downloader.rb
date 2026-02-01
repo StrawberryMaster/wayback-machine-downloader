@@ -617,7 +617,7 @@ class WaybackMachineDownloader
       return
     end
 
-    puts "#{remaining_count} files to download:"
+    puts "#{remaining_count} files to download."
 
     @processed_file_count = 0
     @total_to_download = remaining_count
@@ -631,6 +631,10 @@ class WaybackMachineDownloader
       @session_downloaded_ids.add(file_remote_info[:file_id])
       submit_download_job(file_remote_info)
     end
+
+    # print a header for the download phase
+    puts "\n#{color("Processing downloads:", :white)}"
+    $stdout.flush
 
     # wait for all jobs to finish
     loop do
@@ -896,7 +900,7 @@ class WaybackMachineDownloader
     # check existence *before* download attempt
     # this handles cases where a file was created manually or by a previous partial run without a .db entry
     if File.exist? file_path
-       return ["#{file_url} # #{file_path} already exists. (#{@processed_file_count + 1}/#{@total_to_download})", file_path]
+       return ["#{color("[EXISTS]", :cyan)} #{file_url} (#{@processed_file_count + 1}/#{@total_to_download})", file_path]
     end
 
     begin
@@ -908,22 +912,28 @@ class WaybackMachineDownloader
         if @rewrite && File.extname(file_path) =~ /\.(html?|css|js)$/i
           rewrite_urls_to_relative(file_path)
         end
-        return ["#{file_url} -> #{file_path} (#{@processed_file_count + 1}/#{@total_to_download})", file_path]
+        return ["#{color("[SAVED]", :green)}  #{file_url} (#{@processed_file_count + 1}/#{@total_to_download})", file_path]
       when :skipped_not_found
-        return ["Skipped (not found): #{file_url} (#{@processed_file_count + 1}/#{@total_to_download})", nil]
+        return ["#{color("[NOT FOUND]", :yellow)} #{file_url} (#{@processed_file_count + 1}/#{@total_to_download})", nil]
       else
         # ideally, this case should not be reached if download_with_retry behaves as expected.
-        @logger.warn("Unknown status from download_with_retry for #{file_url}: #{status}")
-        return ["Unknown status for #{file_url}: #{status} (#{@processed_file_count + 1}/#{@total_to_download})", nil]
+        # ideally, this case should not be reached if download_with_retry behaves as expected.
+        return ["#{color("[UNKNOWN]", :magenta)} #{file_url} (#{@processed_file_count + 1}/#{@total_to_download})", nil]
       end
     rescue StandardError => e
-      msg = "Failed: #{file_url} # #{e} (#{@processed_file_count + 1}/#{@total_to_download})"
+      msg = "#{color("[FAILED]", :red)}  #{file_url} # #{e} (#{@processed_file_count + 1}/#{@total_to_download})"
       if File.exist?(file_path) and File.size(file_path) == 0
         File.delete(file_path)
         msg += "\n#{file_path} was empty and was removed."
       end
       return [msg, nil]
     end
+  end
+
+  def color(text, color_code)
+    return text if Gem.win_platform? && !ENV['ENABLE_ANSI']
+    codes = { red: 31, green: 32, yellow: 33, blue: 34, magenta: 35, cyan: 36, white: 37 }
+    "\e[#{codes[color_code]}m#{text}\e[0m"
   end
 
   def file_queue
