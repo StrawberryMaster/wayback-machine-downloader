@@ -22,30 +22,35 @@ module ArchiveAPI
 
     begin
       response = http.get(request_url)
-      body = response.body.to_s.strip
-      return [] if body.empty?
-      json = JSON.parse(body)
 
-      # Check if the response contains the header ["timestamp", "original"]
-      json.shift if json.first == ["timestamp", "original"]
-      json
-    rescue JSON::ParserError => e
-      warn "Failed to parse JSON from API for #{url}: #{e.message}"
-      []
-    rescue Net::ReadTimeout, Net::OpenTimeout => e
+      case response.code.to_i
+      when 200
+        body = response.body.to_s.strip
+        return [] if body.empty?
+        begin
+          json = JSON.parse(body)
+          # check if the response contains the header ["timestamp", "original"]
+          json.shift if json.first == ["timestamp", "original"]
+          json
+        rescue JSON::ParserError => e
+          raise "Malformed JSON response: #{e.message}"
+        end
+      when 429, 500, 502, 503, 504
+        raise "Server error #{response.code}: #{response.message}"
+      else
+        warn "Unexpected API response #{response.code} for #{url}"
+        []
+      end
+    rescue Net::ReadTimeout, Net::OpenTimeout, StandardError => e
       if retries < max_retries
         retries += 1
-        warn "Timeout talking to Wayback CDX API (#{e.class}: #{e.message}) for #{url}, retry #{retries}/#{max_retries}..."
+        warn "Error talking to Wayback CDX API (#{e.class}: #{e.message}) for #{url}, retry #{retries}/#{max_retries}..."
         sleep(delay * retries)
         retry
       else
-        warn "Giving up on Wayback CDX API for #{url} after #{max_retries} timeouts."
+        warn "Giving up on Wayback CDX API for #{url} after #{max_retries} attempts. (Last error: #{e.message})"
         []
       end
-    rescue StandardError => e
-      # treat any other transient-ish error similarly, though without retries for now
-      warn "Error fetching CDX data for #{url}: #{e.message}"
-      []
     end
   end
 
