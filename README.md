@@ -129,6 +129,7 @@ STATE_DB_FILENAME = '.downloaded.txt'  # Tracks completed downloads
 | `--recursive-subdomains` | Scan downloaded HTML/CSS/JS for subdomains of the base domain and download them too |
 | `--subdomain-depth N` | How many discovery rounds to perform when recursively pulling subdomains |
 | `--local` | Rewrite HTML/CSS/JS to use local relative links |
+| `--local-only` | Only rewrite links in an already downloaded directory, doesn't download anything |
 
 **Download to specific directory**
 ```bash
@@ -173,6 +174,12 @@ Useful if you want to download the files exactly as they exist on the Wayback Ma
 ruby wayback_machine_downloader https://example.com --recursive-subdomains --subdomain-depth 1 --local
 ```
 Grabs the site and any discovered subdomains one level deep, rewriting links to work locally.
+
+**Rewrite links to work locally without downloading** (EXPERIMENTAL)
+```bash
+ruby wayback_machine_downloader --local-only ./websites/example.com/
+```
+Useful if you already have the files downloaded and just want to rewrite the links to work locally without running the download process again. This will not download any files, only rewrite links in existing HTML/CSS/JS files. Do make sure to point it to the correct directory (e.g., `./websites/example.com/`), or the folder you save your downloaded files in.
 
 ---
 

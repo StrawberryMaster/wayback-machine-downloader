@@ -829,6 +829,28 @@ class WaybackMachineDownloader
     end
   end
 
+  def rewrite_local_files
+    puts "Scanning #{backup_path} for files to rewrite..."
+    files = Dir.glob(File.join(backup_path, "**/*.{html,htm,css,js,php,asp,aspx,jsp}"))
+    
+    puts "Found #{files.size} files. Rewriting links for local browsing..."
+    
+    pool = Concurrent::FixedThreadPool.new(@threads_count)
+    progress = Concurrent::AtomicFixnum.new(0)
+    
+    files.each do |file_path|
+      pool.post do
+        rewrite_urls_to_relative(file_path)
+        current = progress.increment
+        print "\rProgress: #{current}/#{files.size}" if current % 100 == 0
+      end
+    end
+    
+    pool.shutdown
+    pool.wait_for_termination
+    puts "\nFinished rewriting all files."
+  end
+
   def rewrite_urls_to_relative(file_path)
     return unless File.exist?(file_path)
     

@@ -68,6 +68,10 @@ option_parser = OptionParser.new do |opts|
     options[:rewrite] = true
   end
 
+  opts.on("--local-only", "Only rewrite links in an already downloaded directory, doesn't download anything") do |t|
+    options[:local_only] = true
+  end
+
   opts.on("--reset", "Delete state files (.cdx.json, .downloaded.txt) and restart the download from scratch") do |t|
     options[:reset] = true
   end
@@ -104,7 +108,9 @@ end.parse!
 if (base_url = ARGV[-1])
   options[:base_url] = base_url
   wayback_machine_downloader = WaybackMachineDownloader.new options
-  if options[:list]
+  if options[:local_only]
+  wayback_machine_downloader.rewrite_local_files
+  elsif options[:list]
     wayback_machine_downloader.list_files
   else
     wayback_machine_downloader.download_files
