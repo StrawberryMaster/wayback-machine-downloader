@@ -133,7 +133,7 @@ class WaybackMachineDownloader
   include SubdomainProcessor
   include URLRewrite
 
-  VERSION = "2.4.5"
+  VERSION = "2.4.6"
   DEFAULT_TIMEOUT = 30
   MAX_RETRIES = 3
   RETRY_DELAY = 2
@@ -793,26 +793,39 @@ class WaybackMachineDownloader
     end
   end
 
-  def structure_dir_path dir_path
+    def structure_dir_path dir_path
     begin
-      FileUtils::mkdir_p dir_path unless File.exist? dir_path
-    rescue Errno::EEXIST => e
-      error_to_string = e.to_s
-      puts "# #{error_to_string}"
-      if error_to_string.include? "File exists @ dir_s_mkdir - "
-        file_already_existing = error_to_string.split("File exists @ dir_s_mkdir - ")[-1]
-      elsif error_to_string.include? "File exists - "
-        file_already_existing = error_to_string.split("File exists - ")[-1]
-      else
-        raise "Unhandled directory restructure error # #{error_to_string}"
+      # check if it's already a directory; if not, try to create it
+      FileUtils::mkdir_p dir_path unless File.directory? dir_path
+    rescue Errno::EEXIST, Errno::ENOTDIR => e
+      file_already_existing = nil
+      check_path = dir_path
+      
+      # walk up the path to find the specific file that is blocking directory creation
+      while check_path != "." && check_path != "/"
+        if File.exist?(check_path) && !File.directory?(check_path)
+          file_already_existing = check_path
+          break
+        end
+        parent = File.dirname(check_path)
+        break if parent == check_path
+        check_path = parent
       end
-      file_already_existing_temporary = file_already_existing + '.temp'
-      file_already_existing_permanent = file_already_existing + '/index.html'
-      FileUtils::mv file_already_existing, file_already_existing_temporary
-      FileUtils::mkdir_p file_already_existing
-      FileUtils::mv file_already_existing_temporary, file_already_existing_permanent
-      puts "#{file_already_existing} -> #{file_already_existing_permanent}"
-      structure_dir_path dir_path
+
+      if file_already_existing
+        file_already_existing_temporary = file_already_existing + '.temp'
+        file_already_existing_permanent = file_already_existing + '/index.html'
+        
+        FileUtils::mv file_already_existing, file_already_existing_temporary
+        FileUtils::mkdir_p file_already_existing
+        FileUtils::mv file_already_existing_temporary, file_already_existing_permanent
+        
+        puts "#{file_already_existing} -> #{file_already_existing_permanent}"
+        # retry the directory creation now that the path is clear
+        structure_dir_path dir_path
+      else
+        raise "Unhandled directory restructure error: #{e.message}"
+      end
     end
   end
 
