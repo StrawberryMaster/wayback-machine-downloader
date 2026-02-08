@@ -547,9 +547,9 @@ class WaybackMachineDownloader
         download_success = false
         begin
           @connection_pool.with_connection do |connection|
-            result_message = download_file(file_remote_info, connection)
-            # assume download success if the result message contains ' -> '
-            if result_message && result_message.include?(' -> ')
+            result_message, downloaded_path = download_file(file_remote_info, connection)
+            # consider the download successful if we have a downloaded path present
+            if downloaded_path && File.exist?(downloaded_path)
                download_success = true
             end
             @download_mutex.synchronize do
@@ -678,10 +678,9 @@ class WaybackMachineDownloader
     downloaded_path = nil
     
     @connection_pool.with_connection do |connection|
-      result_message, path = download_file(file_remote_info, connection)
-      downloaded_path = path
+      result_message, downloaded_path = download_file(file_remote_info, connection)
       
-      if result_message && result_message.include?(' -> ')
+      if downloaded_path && File.exist?(downloaded_path)
          download_success = true
       end
       
@@ -751,9 +750,28 @@ class WaybackMachineDownloader
            next 
         end
 
-        # construct the URL for the Wayback API
-        asset_wbm_url = resolved_uri.host + resolved_uri.path
+        # construct the original URL to query the Wayback API
+        asset_wbm_url = if resolved_uri.scheme
+                          "#{resolved_uri.scheme}://#{resolved_uri.host}#{resolved_uri.path}"
+                        else
+                          "#{resolved_uri.host}#{resolved_uri.path}"
+                        end
         asset_wbm_url += "?#{resolved_uri.query}" if resolved_uri.query
+
+        # attempt to find the best snapshot timestamp for this asset to increase hit rate
+        begin
+          @connection_pool.with_connection do |connection|
+            snapshots = get_raw_list_from_api(asset_wbm_url, 0, connection)
+            if snapshots && snapshots.any?
+              # choose the most recent snapshot at or before the
+              # parent page timestamp, else the latest available
+              chosen = snapshots.select { |ts, _| ts.to_i <= parent_timestamp.to_i }.max_by { |s| s[0].to_i } || snapshots.max_by { |s| s[0].to_i }
+              asset_timestamp = chosen[0].to_i if chosen
+            end
+          end
+        rescue => e
+          @logger.warn("Failed to query CDX for #{asset_wbm_url}: #{e.message}") if @logger
+        end
 
         # construct the local file ID
         #  if the asset is on the SAME domain, strip the domain from the folder path
@@ -785,7 +803,7 @@ class WaybackMachineDownloader
 
         @download_mutex.synchronize do
           @total_to_download += 1
-          puts "Queued requisite: #{asset_file_id}"
+          puts "Queued requisite: #{asset_file_id} (#{asset_wbm_url} @ #{asset_timestamp})"
         end
 
         submit_download_job(new_file_info)
