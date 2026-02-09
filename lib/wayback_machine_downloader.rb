@@ -291,6 +291,14 @@ class WaybackMachineDownloader
     snapshot_list_to_consider = Concurrent::Array.new
     mutex = Mutex.new
 
+    # if snapshot_at is set, limit CDX queries to snapshots at or before that timestamp
+    original_to = @to_timestamp
+    skip_cache = false
+    if @snapshot_at
+      @to_timestamp = @snapshot_at
+      skip_cache = true
+    end
+
     puts "Getting snapshot pages from Wayback Machine API..."
 
     # Fetch the initial set of snapshots, sequentially
@@ -371,13 +379,18 @@ class WaybackMachineDownloader
 
     puts " found #{snapshot_list_to_consider.length} snapshots."
 
-    # Save the fetched list to the cache file
+    # save the fetched list to the cache file
     begin
       FileUtils.mkdir_p(File.dirname(cdx_path))
-      File.write(cdx_path, JSON.pretty_generate(snapshot_list_to_consider.to_a)) # Convert Concurrent::Array back to Array for JSON
-      puts "Saved snapshot list to #{cdx_path}"
+      unless skip_cache
+        File.write(cdx_path, JSON.pretty_generate(snapshot_list_to_consider.to_a)) # Convert Concurrent::Array back to Array for JSON
+        puts "Saved snapshot list to #{cdx_path}"
+      end
     rescue => e
       puts "Error saving snapshot cache to #{cdx_path}: #{e.message}"
+    ensure
+      # restore any previously set to-timestamp
+      @to_timestamp = original_to
     end
     puts
 
@@ -391,7 +404,8 @@ class WaybackMachineDownloader
       next unless file_url.include?('/')
       next if file_timestamp.to_i > target_timestamp
 
-      raw_tail = file_url.split('/')[3..-1]&.join('/')
+      # allow empty path by treating missing tail as empty string
+      raw_tail = file_url.split('/')[3..-1]&.join('/') || ''
       file_id = sanitize_and_prepare_id(raw_tail, file_url)
       next if file_id.nil?
       next if match_exclude_filter(file_url)
@@ -407,11 +421,8 @@ class WaybackMachineDownloader
   # Returns a list of files for the composite snapshot
   def get_file_list_composite_snapshot(target_timestamp)
     file_list = get_composite_snapshot_file_list(target_timestamp)
-    file_list = file_list.sort_by { |_,v| v[:timestamp].to_s }.reverse
-    file_list.map do |file_remote_info|
-      file_remote_info[1][:file_id] = file_remote_info[0]
-      file_remote_info[1]
-    end
+    # return a list sorted newest->oldest by timestamp
+    file_list.sort_by { |v| v[:timestamp].to_s }.reverse
   end
 
   def get_file_list_curated
@@ -419,7 +430,7 @@ class WaybackMachineDownloader
     get_all_snapshots_to_consider.each do |file_timestamp, file_url|
       next unless file_url.include?('/')
 
-      raw_tail = file_url.split('/')[3..-1]&.join('/')
+      raw_tail = file_url.split('/')[3..-1]&.join('/') || ''
       file_id = sanitize_and_prepare_id(raw_tail, file_url)
       if file_id.nil?
         puts "Malformed file url, ignoring: #{file_url}"
@@ -450,7 +461,7 @@ class WaybackMachineDownloader
     get_all_snapshots_to_consider.each do |file_timestamp, file_url|
       next unless file_url.include?('/')
 
-      raw_tail = file_url.split('/')[3..-1]&.join('/')
+      raw_tail = file_url.split('/')[3..-1]&.join('/') || ''
       file_id = sanitize_and_prepare_id(raw_tail, file_url)
       if file_id.nil?
         puts "Malformed file url, ignoring: #{file_url}"
