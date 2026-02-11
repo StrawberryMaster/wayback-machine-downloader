@@ -1122,10 +1122,14 @@ class WaybackMachineDownloader
   def download_with_retry(file_path, file_url, file_timestamp, connection, redirect_count = 0)
     retries = 0
     begin
-      wayback_url = if @rewritten
-        "https://web.archive.org/web/#{file_timestamp}/#{file_url}"
+      if redirect_count > 0 && file_url =~ %r{\Ahttps?://}
+        wayback_url = file_url
       else
-        "https://web.archive.org/web/#{file_timestamp}id_/#{file_url}"
+        wayback_url = if @rewritten
+          "https://web.archive.org/web/#{file_timestamp}/#{file_url}"
+        else
+          "https://web.archive.org/web/#{file_timestamp}id_/#{file_url}"
+        end
       end
 
       # Escape characters that are not valid in URI()
