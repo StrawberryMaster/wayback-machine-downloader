@@ -293,10 +293,8 @@ class WaybackMachineDownloader
 
     # if snapshot_at is set, limit CDX queries to snapshots at or before that timestamp
     original_to = @to_timestamp
-    skip_cache = false
     if @snapshot_at
       @to_timestamp = @snapshot_at
-      skip_cache = true
     end
 
     puts "Getting snapshot pages from Wayback Machine API..."
@@ -382,10 +380,8 @@ class WaybackMachineDownloader
     # save the fetched list to the cache file
     begin
       FileUtils.mkdir_p(File.dirname(cdx_path))
-      unless skip_cache
-        File.write(cdx_path, JSON.pretty_generate(snapshot_list_to_consider.to_a)) # Convert Concurrent::Array back to Array for JSON
-        puts "Saved snapshot list to #{cdx_path}"
-      end
+      File.write(cdx_path, JSON.pretty_generate(snapshot_list_to_consider.to_a)) # Convert Concurrent::Array back to Array for JSON
+      puts "Saved snapshot list to #{cdx_path}"
     rescue => e
       puts "Error saving snapshot cache to #{cdx_path}: #{e.message}"
     ensure
