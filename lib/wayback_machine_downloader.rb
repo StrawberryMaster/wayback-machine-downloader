@@ -2,11 +2,8 @@
 
 require 'thread'
 require 'net/http'
-require 'open-uri'
 require 'fileutils'
-require 'cgi'
 require 'json'
-require 'time'
 require 'concurrent-ruby'
 require 'logger'
 require 'zlib'
@@ -133,7 +130,7 @@ class WaybackMachineDownloader
   include SubdomainProcessor
   include URLRewrite
 
-  VERSION = "2.4.6"
+  VERSION = "2.4.7"
   DEFAULT_TIMEOUT = 30
   MAX_RETRIES = 3
   RETRY_DELAY = 2
