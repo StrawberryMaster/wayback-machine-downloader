@@ -327,7 +327,7 @@ class WaybackMachineDownloader
             Concurrent::Future.execute(executor: fetch_pool) do
               result = nil
               @connection_pool.with_connection do |connection|
-                result = get_raw_list_from_api("#{@base_url}/*", page, connection)
+                result = get_raw_list_from_api(@base_url, page, connection)
               end
               result ||= []
               [page, result]

@@ -4,12 +4,22 @@ require 'uri'
 module ArchiveAPI
 
   def get_raw_list_from_api(url, page_index, http)
-    # Automatically append /* if the URL doesn't contain a path after the domain
+    # Automatically append /* for host-only URLs
     # This is a workaround for an issue with the API and *some* domains.
     # See https://github.com/StrawberryMaster/wayback-machine-downloader/issues/6
-    # But don't do this when exact_url flag is set
-    if url && !url.match(/^https?:\/\/.*\//i) && !@exact_url
-      url = "#{url}/*"
+    # But don't do this when exact_url flag is set, and never append twice
+    if url && !@exact_url
+      normalized_url = url.to_s
+      has_wildcard = normalized_url.include?('*')
+      host_and_rest = normalized_url
+        .sub(/\Ahttps?:\/\//i, '')
+        .split(/[?#]/, 2)
+        .first
+      has_path = host_and_rest.include?('/')
+
+      unless has_wildcard || has_path
+        url = "#{normalized_url}/*"
+      end
     end
 
     request_url = URI("https://web.archive.org/cdx/search/cdx")
