@@ -1,5 +1,31 @@
 require 'minitest/autorun'
-require 'wayback_machine_downloader'
+require_relative '../lib/wayback_machine_downloader'
+require 'tmpdir'
+
+class SequenceConnection
+  attr_reader :paths
+
+  def initialize(responses)
+    @responses = responses.dup
+    @paths = []
+  end
+
+  def request(request)
+    @paths << request.path
+    @responses.shift
+  end
+end
+
+class TestHTTPOkResponse < Net::HTTPOK
+  def initialize(body)
+    super('1.1', '200', 'OK')
+    @test_body = body
+  end
+
+  def body
+    @test_body
+  end
+end
 
 class WaybackMachineDownloaderTest < Minitest::Test
 
@@ -7,6 +33,7 @@ class WaybackMachineDownloaderTest < Minitest::Test
     @wayback_machine_downloader = WaybackMachineDownloader.new(
       base_url: 'https://www.example.com'
     )
+    @wayback_machine_downloader.instance_variable_set(:@logger, Logger.new(nil))
     $stdout = StringIO.new
   end
 
@@ -29,6 +56,54 @@ class WaybackMachineDownloaderTest < Minitest::Test
 
   def test_file_list_curated
     assert_equal 20060711191226, @wayback_machine_downloader.get_file_list_curated["linux.htm"][:timestamp]
+  end
+
+  def test_parameters_include_redirect_statuses_by_default
+    filter = @wayback_machine_downloader.send(:parameters_for_api, 0).find { |key, _| key == 'filter' }
+    assert_equal 'statuscode:2..|30[12378]', filter.last
+  end
+
+  def test_redirect_source_resolution
+    assert_equal 'http://www.example.com/new-path',
+      @wayback_machine_downloader.send(:resolve_redirect_source, 'http://www.example.com/index.php', '/new-path')
+
+    archived_url = 'https://web.archive.org/web/20200101000000id_/http://www.example.com/new-path'
+    assert_equal archived_url,
+      @wayback_machine_downloader.send(:resolve_redirect_source, 'http://www.example.com/index.php', archived_url)
+  end
+
+  def test_download_with_retry_follows_relative_redirects
+    tempdir = Dir.mktmpdir
+    @wayback_machine_downloader = WaybackMachineDownloader.new(
+      base_url: 'https://www.example.com',
+      directory: tempdir
+    )
+    @wayback_machine_downloader.instance_variable_set(:@logger, Logger.new(nil))
+
+    redirect_response = Net::HTTPFound.new('1.1', '302', 'Found')
+    redirect_response['location'] = '/new-path'
+
+    success_response = TestHTTPOkResponse.new('redirected content')
+
+    connection = SequenceConnection.new([redirect_response, success_response])
+    file_path = File.join(tempdir, 'redirect-test.html')
+
+    result = @wayback_machine_downloader.send(
+      :download_with_retry,
+      file_path,
+      'http://www.example.com/index.php',
+      20200101000000,
+      connection
+    )
+
+    assert_equal :saved, result
+    assert_equal 2, connection.paths.length
+    assert_includes connection.paths[0], '/web/20200101000000id_/http://www.example.com/index.php'
+    assert_includes connection.paths[1], '/web/20200101000000id_/http://www.example.com/new-path'
+    assert File.exist?(file_path)
+    assert_equal 'redirected content', File.read(file_path)
+  ensure
+    FileUtils.rm_rf(tempdir)
   end
 
   def test_file_list_by_timestamp

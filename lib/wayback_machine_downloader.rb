@@ -1104,6 +1104,46 @@ class WaybackMachineDownloader
     end
   end
 
+  def build_wayback_url(source_url, file_timestamp)
+    source = source_url.to_s
+    return source if wayback_archive_url?(source)
+
+    if source.start_with?('/web/')
+      return "https://web.archive.org#{source}"
+    end
+
+    if @rewritten
+      "https://web.archive.org/web/#{file_timestamp}/#{source}"
+    else
+      "https://web.archive.org/web/#{file_timestamp}id_/#{source}"
+    end
+  end
+
+  def wayback_archive_url?(url)
+    url.to_s.match?(%r{\Ahttps?://web\.archive\.org/web/})
+  end
+
+  def extract_original_url(url)
+    match = url.to_s.match(%r{\Ahttps?://web\.archive\.org/web/\d{1,14}(?:[a-z_]*)/(https?://.+)\z})
+    match && match[1]
+  end
+
+  def resolve_redirect_source(current_source_url, location)
+    return nil if location.nil? || location.empty?
+
+    location = location.to_s
+    return location if wayback_archive_url?(location)
+
+    if location.start_with?('/web/')
+      return "https://web.archive.org#{location}"
+    end
+
+    base_url = extract_original_url(current_source_url) || current_source_url.to_s
+    URI.join(base_url, location).to_s
+  rescue URI::InvalidURIError
+    location
+  end
+
   # wrap URL in parentheses if it contains characters that commonly break unquoted
   # Windows CMD usage (e.g., &). This is only for display; user still must quote
   # when invoking manually.
@@ -1115,15 +1155,7 @@ class WaybackMachineDownloader
   def download_with_retry(file_path, file_url, file_timestamp, connection, redirect_count = 0)
     retries = 0
     begin
-      if redirect_count > 0 && file_url =~ %r{\Ahttps?://}
-        wayback_url = file_url
-      else
-        wayback_url = if @rewritten
-          "https://web.archive.org/web/#{file_timestamp}/#{file_url}"
-        else
-          "https://web.archive.org/web/#{file_timestamp}id_/#{file_url}"
-        end
-      end
+      wayback_url = build_wayback_url(file_url, file_timestamp)
 
       # Escape characters that are not valid in URI()
       wayback_url = wayback_url.gsub(' ', '%20').gsub('[', '%5B').gsub(']', '%5D')
@@ -1190,7 +1222,8 @@ class WaybackMachineDownloader
           raise "Too many redirects for #{file_url}" if redirect_count >= 5
           location = response['location']
           @logger.warn("Redirect found for #{file_url} -> #{location}")
-          return download_with_retry(file_path, location, file_timestamp, connection, redirect_count + 1)
+          redirected_source = resolve_redirect_source(file_url, location)
+          return download_with_retry(file_path, redirected_source, file_timestamp, connection, redirect_count + 1)
         when Net::HTTPTooManyRequests
           sleep(RATE_LIMIT * 2)
           raise "Rate limited, retrying..."

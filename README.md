@@ -255,14 +255,14 @@ ruby wayback_machine_downloader https://example.com --maximum-snapshot 300
 ### Diagnostics
 | Option | Description |
 |--------|-------------|
-| `-a`, `--all` | Include error pages (40x/50x) and redirections (30x) |
+| `-a`, `--all` | Include error pages (40x/50x) and save redirect pages (30x) instead of following them |
 | `-l`, `--list` | List files without downloading |
 
 **Download all files (including errors)**
 ```bash
 ruby wayback_machine_downloader https://example.com --all
 ```
-By default, the downloader limits itself to 200 OK responses. This flag adds error files (40x, 50x) and redirections (30x), as well as empty files that are usually removed.
+By default, the downloader limits itself to successful responses and follows redirect captures to their final content. This flag adds error files (40x, 50x) and saves redirect pages (30x) themselves, as well as empty files that are usually removed.
 
 **Generate URL list**
 ```bash
