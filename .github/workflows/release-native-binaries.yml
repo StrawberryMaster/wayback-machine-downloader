@@ -1,0 +1,103 @@
+name: Build native executables
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset_suffix }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            asset_suffix: linux-amd64
+            exe_ext: ''
+            rubyc_url: https://github.com/pmq20/ruby-packer/releases/download/linux-x64/rubyc
+          - os: macos-13
+            asset_suffix: macos-amd64
+            exe_ext: ''
+            rubyc_url: https://github.com/pmq20/ruby-packer/releases/download/darwin-x64/rubyc
+          - os: windows-2022
+            asset_suffix: windows-amd64
+            exe_ext: '.exe'
+            rubyc_url: https://github.com/pmq20/ruby-packer/releases/download/windows-x64/rubyc.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1.305.0
+        with:
+          ruby-version: '3.3.6'
+
+      - name: Install runtime dependency
+        run: gem install concurrent-ruby -v 1.3.6 --no-document
+
+      - name: Download rubyc (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L "${{ matrix.rubyc_url }}" -o rubyc
+          chmod +x rubyc
+
+      - name: Download rubyc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${{ matrix.rubyc_url }}" -OutFile rubyc.exe
+
+      - name: Build executable (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          OUTPUT="dist/wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }}"
+          ./rubyc --root . --output "$OUTPUT" bin/wayback_machine_downloader
+          chmod +x "$OUTPUT" || true
+          echo "ASSET_PATH=$OUTPUT" >> "$GITHUB_ENV"
+
+      - name: Build executable (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $output = "dist/wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }}"
+          ./rubyc.exe --root . --output "$output" bin/wayback_machine_downloader
+          "ASSET_PATH=$output" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayback-machine-downloader-${{ matrix.asset_suffix }}
+          path: ${{ env.ASSET_PATH }}
+
+  release:
+    name: Publish GitHub release assets
+    runs-on: ubuntu-24.04
+    needs: build
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Show generated assets
+        run: ls -lah release-assets
+
+      - name: Attach binaries to release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

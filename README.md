@@ -33,6 +33,9 @@ Note that you can also manually download this repository and run commands locall
 
 **Conflict warning**: This gem may conflict with hartator's original `wayback_machine_downloader` gem. You might need to uninstall the original for this fork to work. A good way to tell is if a command fails and lists the gem version as 2.3.1 or earlier; this WMD fork uses 2.3.2 or above.
 
+### Native executable releases
+Oh hey, this is a thing now. If you go to the [Actions tab](https://github.com/StrawberryMaster/wayback-machine-downloader/actions), you'll see a workflow that builds native executables for Linux, macOS, and Windows whenever a new version tag is pushed. The resulting binaries are uploaded to the GitHub Release for that version. Note: this is experimental!
+
 ### Step-by-step setup
 1. **Install Ruby**:
    ```bash
