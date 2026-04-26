@@ -73,7 +73,8 @@ module ArchiveAPI
   end
 
   def parameters_for_api(page_index)
-    parameters = [["fl", "timestamp,original"], ["collapse", "digest"], ["gzip", "true"]]
+    parameters = [["fl", "timestamp,original"], ["gzip", "true"]]
+    parameters.push(["collapse", "digest"]) unless @keep_duplicates || @all_timestamps
     parameters.push(["filter", "statuscode:2..|30[12378]"]) unless @all
     parameters.push(["from", @from_timestamp.to_s]) if @from_timestamp && @from_timestamp != 0
     parameters.push(["to", @to_timestamp.to_s]) if @to_timestamp && @to_timestamp != 0

@@ -256,6 +256,7 @@ ruby wayback_machine_downloader https://example.com --maximum-snapshot 300
 | Option | Description |
 |--------|-------------|
 | `-a`, `--all` | Include error pages (40x/50x) and save redirect pages (30x) instead of following them |
+| `--keep-duplicates` | Disable CDX digest collapsing so duplicate-content captures are preserved |
 | `-l`, `--list` | List files without downloading |
 
 **Download all files (including errors)**
@@ -263,6 +264,12 @@ ruby wayback_machine_downloader https://example.com --maximum-snapshot 300
 ruby wayback_machine_downloader https://example.com --all
 ```
 By default, the downloader limits itself to successful responses and follows redirect captures to their final content. This flag adds error files (40x, 50x) and saves redirect pages (30x) themselves, as well as empty files that are usually removed.
+
+**Keep duplicate captures (disable digest collapse)**
+```bash
+ruby wayback_machine_downloader https://example.com --keep-duplicates
+```
+Useful when you need separate captures even if they have identical response bodies, such as some redirect source URLs.
 
 **Generate URL list**
 ```bash

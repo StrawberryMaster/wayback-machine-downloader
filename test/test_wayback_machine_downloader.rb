@@ -63,6 +63,24 @@ class WaybackMachineDownloaderTest < Minitest::Test
     assert_equal 'statuscode:2..|30[12378]', filter.last
   end
 
+  def test_parameters_include_collapse_digest_by_default
+    collapse = @wayback_machine_downloader.send(:parameters_for_api, 0).find { |key, _| key == 'collapse' }
+    assert_equal 'digest', collapse.last
+  end
+
+  def test_keep_duplicates_disables_collapse_digest
+    keep_duplicates_downloader = WaybackMachineDownloader.new(
+      base_url: 'https://www.example.com',
+      keep_duplicates: true
+    )
+    keep_duplicates_downloader.instance_variable_set(:@logger, Logger.new(nil))
+
+    collapse = keep_duplicates_downloader.send(:parameters_for_api, 0).find { |key, _| key == 'collapse' }
+    assert_nil collapse
+  ensure
+    FileUtils.rm_rf(keep_duplicates_downloader.backup_path) if keep_duplicates_downloader
+  end
+
   def test_redirect_source_resolution
     assert_equal 'http://www.example.com/new-path',
       @wayback_machine_downloader.send(:resolve_redirect_source, 'http://www.example.com/index.php', '/new-path')
