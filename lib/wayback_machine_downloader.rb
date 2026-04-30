@@ -526,7 +526,16 @@ class WaybackMachineDownloader
     if File.exist?(db_path) && !@reset
       puts "Loading list of already downloaded files from #{db_path}"
       begin
-        File.foreach(db_path) { |line| downloaded_ids.add(line.strip) }
+        File.foreach(db_path) do |line|
+          id = line.strip
+          # only trust DB entries that actually exist on disk; this helps when resuming
+          path = local_path_for_file_id(id)
+          if path && File.exist?(path)
+            downloaded_ids.add(id)
+          else
+            puts "Found DB entry but file missing, will requeue: #{id}" if @logger && @logger.level == Logger::DEBUG
+          end
+        end
       rescue => e
         puts "Error reading downloaded files list #{db_path}: #{e.message}. Assuming no files downloaded."
         downloaded_ids.clear
@@ -681,6 +690,23 @@ class WaybackMachineDownloader
   def process_single_file(file_remote_info)
     download_success = false
     downloaded_path = nil
+
+    # fast-path for resumed runs: if file already exists locally, avoid HTTP work entirely
+    existing_path = local_path_for_file_id(file_remote_info[:file_id])
+    if existing_path && File.exist?(existing_path)
+      result_message = "#{color("[EXISTS]", :cyan)} #{file_remote_info[:file_url]} (#{@processed_file_count + 1}/#{@total_to_download})"
+      @download_mutex.synchronize do
+        @processed_file_count += 1 if @processed_file_count < @total_to_download
+        puts result_message
+      end
+
+      append_to_db(file_remote_info[:file_id])
+
+      if @page_requisites && File.extname(existing_path) =~ /\.(html?|php|asp|aspx|jsp)$/i
+        process_page_requisites(existing_path, file_remote_info)
+      end
+      return
+    end
     
     @connection_pool.with_connection do |connection|
       result_message, downloaded_path = download_file(file_remote_info, connection)
@@ -985,6 +1011,27 @@ class WaybackMachineDownloader
         msg += "\n#{file_path} was empty and was removed."
       end
       return [msg, nil]
+    end
+  end
+
+  # derive the local filesystem path for a sanitized `file_id` stored in the DB
+  def local_path_for_file_id(file_id)
+    return nil if file_id.nil?
+    current_backup_path = backup_path
+
+    # file_id coming from DB is expected to already be sanitized
+    raw_path_elements = file_id.split('/')
+
+    if file_id == ""
+      dir_path = current_backup_path
+      return File.join(dir_path, 'index.html')
+    elsif file_id[-1] == '/' || (raw_path_elements.last && !raw_path_elements.last.include?('.'))
+      dir_path = File.join(current_backup_path, *raw_path_elements)
+      return File.join(dir_path, 'index.html')
+    else
+      filename = raw_path_elements.pop
+      dir_path = File.join(current_backup_path, *raw_path_elements)
+      return File.join(dir_path, filename)
     end
   end
 
