@@ -216,4 +216,47 @@ class WaybackMachineDownloaderTest < Minitest::Test
     @wayback_machine_downloader.download_files
   end
 
+  def test_local_rewrite_root_absolute_urls_from_nested_path
+    tempdir = Dir.mktmpdir
+    downloader = WaybackMachineDownloader.new(
+      base_url: 'https://www.example.com',
+      directory: tempdir
+    )
+    downloader.instance_variable_set(:@logger, Logger.new(nil))
+
+    file_path = File.join(tempdir, 'foo', 'bar', 'index.html')
+    FileUtils.mkdir_p(File.dirname(file_path))
+    File.write(
+      file_path,
+      '<img src="/baz/bat/blah.png"><style>body{background:url("/img/bg.png")}</style>'
+    )
+
+    downloader.rewrite_urls_to_relative(file_path)
+    rewritten = File.read(file_path)
+
+    assert_includes rewritten, 'src="../../baz/bat/blah.png"'
+    assert_includes rewritten, 'url("../../img/bg.png")'
+  ensure
+    FileUtils.rm_rf(tempdir)
+  end
+
+  def test_local_rewrite_root_absolute_urls_from_site_root_file
+    tempdir = Dir.mktmpdir
+    downloader = WaybackMachineDownloader.new(
+      base_url: 'https://www.example.com',
+      directory: tempdir
+    )
+    downloader.instance_variable_set(:@logger, Logger.new(nil))
+
+    file_path = File.join(tempdir, 'index.html')
+    File.write(file_path, '<img src="/baz/bat/blah.png">')
+
+    downloader.rewrite_urls_to_relative(file_path)
+    rewritten = File.read(file_path)
+
+    assert_includes rewritten, 'src="./baz/bat/blah.png"'
+  ensure
+    FileUtils.rm_rf(tempdir)
+  end
+
 end

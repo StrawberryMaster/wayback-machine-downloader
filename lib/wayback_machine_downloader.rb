@@ -4,6 +4,7 @@ require 'thread'
 require 'net/http'
 require 'fileutils'
 require 'json'
+require 'pathname'
 require 'concurrent-ruby'
 require 'logger'
 require 'zlib'
@@ -924,17 +925,19 @@ class WaybackMachineDownloader
       
       # URLs in JavaScript
       content = rewrite_js_urls(content)
+
+      root_prefix = site_root_relative_prefix(file_path)
       
-      # for URLs that start with a single slash, make them relative
+      # rewrite root-absolute links to paths relative to the downloaded site root
       content.gsub!(/(\s(?:href|src|action|data-src|data-url)=["'])\/([^"'\/][^"']*)(["'])/i) do
         prefix, path, suffix = $1, $2, $3
-        "#{prefix}./#{path}#{suffix}"
+        "#{prefix}#{root_prefix}#{path}#{suffix}"
       end
       
-      # for URLs in CSS that start with a single slash, make them relative
+      # apply the same root-relative conversion to CSS url(...) references
       content.gsub!(/url\(\s*["']?\/([^"'\)\/][^"'\)]*?)["']?\s*\)/i) do
         path = $1
-        "url(\"./#{path}\")"
+        "url(\"#{root_prefix}#{path}\")"
       end
 
       # save the modified content back to the file
@@ -943,6 +946,24 @@ class WaybackMachineDownloader
     rescue Errno::ENOENT => e
       @logger.warn("Error reading file #{file_path}: #{e.message}")
     end
+  end
+
+  def site_root_relative_prefix(file_path)
+    file_dir = File.dirname(File.expand_path(file_path))
+    root_dir = File.expand_path(backup_path)
+
+    begin
+      relative_dir = Pathname.new(file_dir).relative_path_from(Pathname.new(root_dir)).to_s
+    rescue ArgumentError
+      return './'
+    end
+
+    return './' if relative_dir == '.' || relative_dir.empty?
+
+    depth = relative_dir.split(/[\\\/]+/).reject(&:empty?).length
+    return './' if depth <= 0
+
+    '../' * depth
   end
 
   def download_file (file_remote_info, http)
