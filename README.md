@@ -17,7 +17,7 @@ Your files will be saved to `./websites/example.com/` with their original struct
 ## Installation
 
 ### Requirements
-- Ruby 2.3+ ([download Ruby here](https://www.ruby-lang.org/en/downloads/))
+- Ruby 3.4.3+ ([download Ruby here](https://www.ruby-lang.org/en/downloads/))
 - Bundler gem (`gem install bundler`)
 
 ### Quick install
