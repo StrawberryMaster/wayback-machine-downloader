@@ -17,61 +17,93 @@ jobs:
           - os: ubuntu-24.04
             asset_suffix: linux-amd64
             exe_ext: ''
-            rubyc_url: https://github.com/pmq20/ruby-packer/releases/download/linux-x64/rubyc
           - os: macos-13
             asset_suffix: macos-amd64
             exe_ext: ''
-            rubyc_url: https://github.com/pmq20/ruby-packer/releases/download/darwin-x64/rubyc
           - os: windows-2022
             asset_suffix: windows-amd64
             exe_ext: '.exe'
-            rubyc_url: https://github.com/pmq20/ruby-packer/releases/download/windows-x64/rubyc.exe
+
+    env:
+      RUBY_VERSION: '3.4.3'
+      TEBAKO_PREFIX: ${{ github.workspace }}/../.tebako-cache
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
 
-      - name: Setup Ruby
+      - name: Cache Tebako environment
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TEBAKO_PREFIX }}
+          key: ${{ runner.os }}-tebako-${{ env.RUBY_VERSION }}-${{ hashFiles('**/Gemfile', '**/*.gemspec') }}
+          restore-keys: |
+            ${{ runner.os }}-tebako-${{ env.RUBY_VERSION }}-
+
+      - name: Build executable (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          mkdir -p ../dist
+          docker run --rm -v ${{ github.workspace }}:/mnt/w -v ${{ github.workspace }}/../dist:/mnt/d -t ghcr.io/tamatebako/tebako-ubuntu-22.04:latest \
+            tebako press \
+            --root=/mnt/w \
+            --entry-point=bin/wayback_machine_downloader \
+            --output=/mnt/d/wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }} \
+            --Ruby=${{ env.RUBY_VERSION }} \
+            --patchelf
+          echo "ASSET_PATH=${{ github.workspace }}/../dist/wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }}" >> $GITHUB_ENV
+
+      - name: Setup Ruby (macOS)
+        if: matrix.os == 'macos-13'
         uses: ruby/setup-ruby@v1.305.0
         with:
-          ruby-version: '3.3.6'
+          ruby-version: ${{ env.RUBY_VERSION }}
 
-      - name: Install runtime dependency
-        run: gem install concurrent-ruby -v 1.3.6 --no-document
-
-      - name: Download rubyc (Linux/macOS)
-        if: runner.os != 'Windows'
-        shell: bash
+      - name: Install macOS dependencies & Tebako
+        if: matrix.os == 'macos-13'
         run: |
-          set -euo pipefail
-          curl -L "${{ matrix.rubyc_url }}" -o rubyc
-          chmod +x rubyc
+          brew install cmake bison
+          gem install tebako --no-document
 
-      - name: Download rubyc (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Build executable (macOS)
+        if: matrix.os == 'macos-13'
         run: |
-          Invoke-WebRequest -Uri "${{ matrix.rubyc_url }}" -OutFile rubyc.exe
+          mkdir -p ../dist
+          tebako press \
+            --root=. \
+            --entry-point=bin/wayback_machine_downloader \
+            --output=../dist/wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }} \
+            --Ruby=${{ env.RUBY_VERSION }}
+          echo "ASSET_PATH=${{ github.workspace }}/../dist/wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }}" >> $GITHUB_ENV
 
-      - name: Build executable (Linux/macOS)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          OUTPUT="dist/wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }}"
-          ./rubyc --root . --output "$OUTPUT" bin/wayback_machine_downloader
-          chmod +x "$OUTPUT" || true
-          echo "ASSET_PATH=$OUTPUT" >> "$GITHUB_ENV"
+      - name: Setup Ruby & MSYS2 (Windows)
+        if: matrix.os == 'windows-2022'
+        uses: ruby/setup-ruby@v1.305.0
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
 
       - name: Build executable (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+        if: matrix.os == 'windows-2022'
+        shell: cmd
         run: |
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          $output = "dist/wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }}"
-          ./rubyc.exe --root . --output "$output" bin/wayback_machine_downloader
-          "ASSET_PATH=$output" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          :: Set up the MinGW/UCRT64 build toolchain
+          call ridk enable ucrt64
+          pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-toolchain
+          
+          :: Install Tebako
+          gem install tebako --no-document
+          
+          :: Create safe outside dist folder
+          mkdir ..\dist
+          
+          :: Press the executable
+          tebako press ^
+            --root=. ^
+            --entry-point=bin/wayback_machine_downloader ^
+            --output=..\dist\wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }} ^
+            --Ruby=%RUBY_VERSION%
+          
+          echo ASSET_PATH=%GITHUB_WORKSPACE%\..\dist\wayback_machine_downloader-${{ matrix.asset_suffix }}${{ matrix.exe_ext }} >> %GITHUB_ENV%
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -80,7 +112,7 @@ jobs:
           path: ${{ env.ASSET_PATH }}
 
   release:
-    name: Publish GitHub release assets
+    name: Publish release assets
     runs-on: ubuntu-24.04
     needs: build
     permissions:
