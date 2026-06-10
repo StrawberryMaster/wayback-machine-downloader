@@ -40,11 +40,17 @@ module SubdomainProcessor
   private
   
   def extract_base_domain(url)
-    uri = URI.parse(url.gsub(/^https?:\/\//, '').split('/').first) rescue nil
+    # ensure the URL has a scheme for URI parsing
+    normalized_url = url.match?(/^https?:\/\//i) ? url : "http://#{url}"
+    uri = URI.parse(normalized_url) rescue nil
     return nil unless uri
     
-    host = uri.host || uri.path.split('/').first
-    host = host.downcase
+    # extract the host (and default to parsing path if host is missing)
+    host = uri.host || (uri.path || '').split('/').first
+    return nil unless host
+    
+    # strip port numbers if present
+    host = host.split(':').first.downcase
     
     # extract the base domain (e.g., "example.com" from "sub.example.com")
     parts = host.split('.')
