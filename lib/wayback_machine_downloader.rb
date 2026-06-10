@@ -911,10 +911,27 @@ class WaybackMachineDownloader
 
       # detect encoding for HTML files
       if file_ext == '.html' || file_ext == '.htm' || file_ext == '.php' || file_ext == '.asp'
-        encoding = content.match(/<meta\s+charset=["']?([^"'>]+)/i)&.captures&.first || 'UTF-8'
-        content.force_encoding(encoding) rescue content.force_encoding('UTF-8')
+        encoding_match = content.match(/<meta.*?charset=["'\s]?([^"'\s>;]+)/i)
+        encoding_name = encoding_match ? encoding_match.captures.first : 'UTF-8'
+        
+        begin
+          encoding = Encoding.find(encoding_name)
+        rescue ArgumentError
+          encoding = Encoding::UTF_8
+        end
+        
+        content.force_encoding(encoding)
       else
         content.force_encoding('UTF-8')
+      end
+
+      # convert the content to valid UTF-8
+      if !content.valid_encoding? || content.encoding != Encoding::UTF_8
+        begin
+          content = content.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '')
+        rescue Encoding::UndefinedConversionError, Encoding::InvalidByteSequenceError, ArgumentError
+          content = content.tidy_bytes
+        end
       end
 
       # URLs in HTML attributes
@@ -945,6 +962,8 @@ class WaybackMachineDownloader
       puts "Rewrote URLs in #{file_path} to be relative."
     rescue Errno::ENOENT => e
       @logger.warn("Error reading file #{file_path}: #{e.message}")
+    rescue StandardError => e
+      @logger.error("Failed to rewrite URLs in #{file_path}: #{e.message}")
     end
   end
 
