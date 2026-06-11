@@ -17,6 +17,13 @@ require_relative 'wayback_machine_downloader/page_requisites'
 require_relative 'wayback_machine_downloader/subdom_processor'
 require_relative 'wayback_machine_downloader/url_rewrite'
 
+begin
+  require 'httpx'
+  HTTPX_AVAILABLE = true
+rescue LoadError
+  HTTPX_AVAILABLE = false
+end
+
 class ConnectionPool
   MAX_AGE = 300
   CLEANUP_INTERVAL = 60
@@ -67,7 +74,12 @@ class ConnectionPool
   def stale?(entry)
     return true if entry.nil? || entry[:http].nil?
     http = entry[:http]
-    !http.started? || (Time.now - entry[:created_at] > MAX_AGE)
+    
+    if HTTPX_AVAILABLE && http.is_a?(HTTPX::Session)
+      Time.now - entry[:created_at] > MAX_AGE
+    else
+      !http.started? || (Time.now - entry[:created_at] > MAX_AGE)
+    end
   end
 
   def build_connection_entry
@@ -75,7 +87,12 @@ class ConnectionPool
   end
 
   def safe_finish(http)
-    http.finish if http&.started?
+    return if http.nil?
+    if HTTPX_AVAILABLE && http.is_a?(HTTPX::Session)
+      http.close
+    else
+      http.finish if http&.started?
+    end
   rescue StandardError
     nil
   end
@@ -114,14 +131,24 @@ class ConnectionPool
   end
 
   def create_connection
-    http = Net::HTTP.new("web.archive.org", 443)
-    http.use_ssl = true
-    http.read_timeout = DEFAULT_TIMEOUT
-    http.open_timeout = DEFAULT_TIMEOUT
-    http.keep_alive_timeout = 30
-    http.max_retries = MAX_RETRIES
-    http.start
-    http
+    if HTTPX_AVAILABLE
+      HTTPX.with(
+        timeout: {
+          connect_timeout: DEFAULT_TIMEOUT,
+          read_timeout: DEFAULT_TIMEOUT,
+          write_timeout: DEFAULT_TIMEOUT
+        }
+      )
+    else
+      http = Net::HTTP.new("web.archive.org", 443)
+      http.use_ssl = true
+      http.read_timeout = DEFAULT_TIMEOUT
+      http.open_timeout = DEFAULT_TIMEOUT
+      http.keep_alive_timeout = 30
+      http.max_retries = MAX_RETRIES
+      http.start
+      http
+    end
   end
 end
 
@@ -589,8 +616,17 @@ class WaybackMachineDownloader
     end
   end
   
+  @@engine_printed = false
+
   def download_files
     start_time = Time.now
+
+    unless @@engine_printed
+      engine_name = HTTPX_AVAILABLE ? "HTTPX" : "Net::HTTP"
+      puts "Connection engine used: #{color(engine_name, :green)}"
+      @@engine_printed = true
+    end
+
     puts "Downloading #{@base_url} to #{backup_path} from Wayback Machine archives."
 
     FileUtils.mkdir_p(backup_path)
@@ -1261,65 +1297,85 @@ class WaybackMachineDownloader
           return :skipped_not_found
       end
 
-      request = Net::HTTP::Get.new(URI(wayback_url))
-      request["Connection"] = "keep-alive"
-      request["User-Agent"] = "WaybackMachineDownloader/#{VERSION}"
-      request["Accept-Encoding"] = "gzip, deflate"
-
-      response = connection.request(request)
-
-      save_response_body = lambda do
-        File.open(file_path, "wb") do |file|
-          body = response.body
-          if response['content-encoding'] == 'gzip' && body && !body.empty?
-            begin
-              gz = Zlib::GzipReader.new(StringIO.new(body))
-              decompressed_body = gz.read
-              gz.close
-              file.write(decompressed_body)
-            rescue Zlib::GzipFile::Error => e
-              @logger.warn("Failure decompressing gzip file #{file_url}: #{e.message}. Writing raw body.")
-              file.write(body)
-            end
+      if HTTPX_AVAILABLE && connection.is_a?(HTTPX::Session)
+        response = connection.get(wayback_url)
+        
+        raise response.error if response.is_a?(HTTPX::ErrorResponse)
+        
+        code = response.status
+        
+        save_response_body = lambda do
+          if response.respond_to?(:copy_to)
+            response.copy_to(file_path)
           else
-            file.write(body) if body
+            response.body.copy_to(file_path)
+          end
+        end
+      else
+        request = Net::HTTP::Get.new(URI(wayback_url))
+        request["Connection"] = "keep-alive"
+        request["User-Agent"] = "WaybackMachineDownloader/#{VERSION}"
+        request["Accept-Encoding"] = "gzip, deflate"
+
+        response = connection.request(request)
+        code = response.code.to_i
+
+        save_response_body = lambda do
+          File.open(file_path, "wb") do |file|
+            body = response.body
+            if response['content-encoding'] == 'gzip' && body && !body.empty?
+              begin
+                gz = Zlib::GzipReader.new(StringIO.new(body))
+                decompressed_body = gz.read
+                gz.close
+                file.write(decompressed_body)
+              rescue Zlib::GzipFile::Error => e
+                @logger.warn("Failure decompressing gzip file #{file_url}: #{e.message}. Writing raw body.")
+                file.write(body)
+              end
+            else
+              file.write(body) if body
+            end
           end
         end
       end
 
       if @all
-        case response
-        when Net::HTTPSuccess, Net::HTTPRedirection, Net::HTTPClientError, Net::HTTPServerError
+        case code
+        when 200..599
           save_response_body.call
-          if response.is_a?(Net::HTTPRedirection)
-            @logger.info("Saved redirect page for #{file_url} (status #{response.code}).")
-          elsif response.is_a?(Net::HTTPClientError) || response.is_a?(Net::HTTPServerError)
-            @logger.info("Saved error page for #{file_url} (status #{response.code}).")
+          if (300..399).cover?(code)
+            @logger.info("Saved redirect page for #{file_url} (status #{code}).")
+          elsif (400..599).cover?(code)
+            @logger.info("Saved error page for #{file_url} (status #{code}).")
           end
           return :saved
         else
           # for any other response type when --all is true, treat as an error to be retried or failed
-          raise "Unhandled HTTP response: #{response.code} #{response.message}"
+          raise "Unhandled HTTP response: #{code}"
         end
       else # not @all (our default behavior)
-        case response
-        when Net::HTTPSuccess
+        if (200..299).cover?(code)
           save_response_body.call
           return :saved
-        when Net::HTTPRedirection
+        elsif (300..399).cover?(code)
           raise "Too many redirects for #{file_url}" if redirect_count >= 5
-          location = response['location']
+          location = if HTTPX_AVAILABLE && connection.is_a?(HTTPX::Session)
+                       response.headers['location']
+                     else
+                       response['location']
+                     end
           @logger.warn("Redirect found for #{file_url} -> #{location}")
           redirected_source = resolve_redirect_source(file_url, location)
           return download_with_retry(file_path, redirected_source, file_timestamp, connection, redirect_count + 1)
-        when Net::HTTPTooManyRequests
+        elsif code == 429
           sleep(RATE_LIMIT * 2)
           raise "Rate limited, retrying..."
-        when Net::HTTPNotFound
+        elsif code == 404
           @logger.warn("File not found, skipping: #{file_url}")
           return :skipped_not_found
         else
-          raise "HTTP Error: #{response.code} #{response.message}"
+          raise "HTTP Error: #{code}"
         end
       end
 
