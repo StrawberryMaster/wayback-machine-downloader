@@ -202,6 +202,7 @@ class WaybackMachineDownloader
     @connection_pool = ConnectionPool.new(CONNECTION_POOL_SIZE)
     @db_mutex = Mutex.new
     @rewrite = params[:rewrite] || false
+    @delay = params[:delay] ? params[:delay].to_f : 0.0
     @recursive_subdomains = params[:recursive_subdomains] || false
     @subdomain_depth = params[:subdomain_depth] || 1
     @snapshot_at = params[:snapshot_at] ? params[:snapshot_at].to_i : nil
@@ -728,6 +729,9 @@ class WaybackMachineDownloader
     download_success = false
     downloaded_path = nil
 
+    # if delay was set by the user
+    sleep(@delay) if @delay > 0
+    
     # fast-path for resumed runs: if file already exists locally, avoid HTTP work entirely
     existing_path = local_path_for_file_id(file_remote_info[:file_id])
     if existing_path && File.exist?(existing_path)

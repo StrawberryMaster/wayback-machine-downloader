@@ -84,6 +84,10 @@ option_parser = OptionParser.new do |opts|
     options[:keep] = true
   end
 
+  opts.on("--delay SECONDS", Float, "Delay between downloads in seconds (default: 0)") do |t|
+    options[:delay] = t
+  end
+
   opts.on("--rt", "--retry N", Integer, "Maximum number of retries for failed downloads (default: 3)") do |t|
     options[:max_retries] = t
   end

@@ -129,6 +129,7 @@ STATE_DB_FILENAME = '.downloaded.txt'  # Tracks completed downloads
 | `-e`, `--exact-url`     | Download exact URL only |
 | `-r`, `--rewritten`     | Download rewritten Wayback Archive files only |
 | `--rt`, `--retry NUM` | Number of tries in case a download fails (default: 1) |
+| `--delay SECONDS` | Delay between downloads in seconds (default: 0)  |
 | `--recursive-subdomains` | Scan downloaded HTML/CSS/JS for subdomains of the base domain and download them too |
 | `--subdomain-depth N` | How many discovery rounds to perform when recursively pulling subdomains |
 | `--local` | Rewrite HTML/CSS/JS to use local relative links |
