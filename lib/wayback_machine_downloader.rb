@@ -10,6 +10,7 @@ require 'logger'
 require 'zlib'
 require 'stringio'
 require 'digest'
+require 'etc'
 require_relative 'wayback_machine_downloader/tidy_bytes'
 require_relative 'wayback_machine_downloader/to_regex'
 require_relative 'wayback_machine_downloader/archive_api'
@@ -74,7 +75,7 @@ class ConnectionPool
   def stale?(entry)
     return true if entry.nil? || entry[:http].nil?
     http = entry[:http]
-    
+
     if HTTPX_AVAILABLE && http.is_a?(HTTPX::Session)
       Time.now - entry[:created_at] > MAX_AGE
     else
@@ -192,7 +193,14 @@ class WaybackMachineDownloader
     @all = params[:all]
     @keep_duplicates = params[:keep_duplicates] || false
     @maximum_pages = params[:maximum_pages] ? params[:maximum_pages].to_i : 100
-    @threads_count = [params[:threads_count].to_i, 1].max
+    default_threads = begin
+      [Etc.nprocessors, 4].max
+    rescue StandardError
+      4
+    end
+    threads_param = params[:threads_count] ? params[:threads_count].to_i : 0
+    threads_param = default_threads if threads_param <= 0
+    @threads_count = [threads_param, 1].max
     @rewritten = params[:rewritten]
     @reset = params[:reset]
     @keep = params[:keep]
@@ -209,6 +217,12 @@ class WaybackMachineDownloader
     @max_retries = params[:max_retries] ? params[:max_retries].to_i : MAX_RETRIES
     @page_requisites = params[:page_requisites] || false
     @pending_jobs = Concurrent::AtomicFixnum.new(0)
+
+    @db_buffer = []
+    @db_buffer_mutex = Mutex.new
+    @db_last_flush = Time.now
+    @db_flush_threshold = 50  # flush to disk every 50 completed files
+    @db_flush_interval = 5.0  # or flush every 5 seconds even if count isn't met
 
     # URL for rejecting invalid/unencoded wayback urls
     @url_regexp = /^(([A-Za-z][A-Za-z0-9+.-]*):((\/\/(((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=]))+)(:([0-9]*))?)(((\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)))|((\/(((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)+)(\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)?))|((((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)+)(\/((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)*))*)))(\?((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)|\/|\?)*)?(\#((([A-Za-z0-9._~-])|(%[ABCDEFabcdef0-9][ABCDEFabcdef0-9])|([!$&'('')'*+,;=])|:|@)|\/|\?)*)?)$/
@@ -574,12 +588,40 @@ class WaybackMachineDownloader
   end
 
   def append_to_db(file_id)
-    @db_mutex.synchronize do
-      begin
-        FileUtils.mkdir_p(File.dirname(db_path))
-        File.open(db_path, 'a') { |f| f.puts(file_id) }
-      rescue => e
-        @logger.error("Failed to append downloaded file ID #{file_id} to #{db_path}: #{e.message}")
+    flush_needed = false
+
+    @db_buffer_mutex.synchronize do
+      @db_buffer << file_id
+      if @db_buffer.size >= @db_flush_threshold || (Time.now - @db_last_flush) >= @db_flush_interval
+        flush_needed = true
+      end
+    end
+
+    flush_db if flush_needed
+  end
+
+  def flush_db
+    lines_to_write = nil
+
+    @db_buffer_mutex.synchronize do
+      return if @db_buffer.empty?
+      lines_to_write = @db_buffer.dup
+      @db_buffer.clear
+      @db_last_flush = Time.now
+    end
+
+    return if lines_to_write.nil? || lines_to_write.empty?
+
+    begin
+      FileUtils.mkdir_p(File.dirname(db_path))
+      File.open(db_path, 'a') do |f|
+        lines_to_write.each { |id| f.puts(id) }
+      end
+    rescue StandardError => e
+      @logger.error("Failed to write batch to #{db_path}: #{e.message}")
+
+      @db_buffer_mutex.synchronize do
+        @db_buffer.unshift(*lines_to_write)
       end
     end
   end
@@ -616,7 +658,7 @@ class WaybackMachineDownloader
       end
     end
   end
-  
+
   @@engine_printed = false
 
   def download_files
@@ -646,7 +688,7 @@ class WaybackMachineDownloader
 
     # Load IDs of already downloaded files
     downloaded_ids = load_downloaded_ids
-    
+
     # We use a thread-safe Set to track what we have queued/downloaded in this session
     # to avoid infinite loops with page requisites
     @session_downloaded_ids = Concurrent::Set.new
@@ -662,7 +704,7 @@ class WaybackMachineDownloader
     if skipped_count > 0
       puts "Found #{skipped_count} previously downloaded files, skipping them."
     end
-    
+
     if remaining_count == 0 && !@page_requisites
       puts "All matching files have already been downloaded."
       cleanup
@@ -731,7 +773,7 @@ class WaybackMachineDownloader
 
     # if delay was set by the user
     sleep(@delay) if @delay > 0
-    
+
     # fast-path for resumed runs: if file already exists locally, avoid HTTP work entirely
     existing_path = local_path_for_file_id(file_remote_info[:file_id])
     if existing_path && File.exist?(existing_path)
@@ -748,14 +790,14 @@ class WaybackMachineDownloader
       end
       return
     end
-    
+
     @connection_pool.with_connection do |connection|
       result_message, downloaded_path = download_file(file_remote_info, connection)
-      
+
       if downloaded_path && File.exist?(downloaded_path)
          download_success = true
       end
-      
+
       @download_mutex.synchronize do
         @processed_file_count += 1 if @processed_file_count < @total_to_download
         # only print if it's a "User" file or a requisite we found
@@ -765,7 +807,7 @@ class WaybackMachineDownloader
 
     if download_success
       append_to_db(file_remote_info[:file_id])
-      
+
       if @page_requisites && downloaded_path && File.extname(downloaded_path) =~ /\.(html?|php|asp|aspx|jsp)$/i
         process_page_requisites(downloaded_path, file_remote_info)
       end
@@ -773,7 +815,7 @@ class WaybackMachineDownloader
   rescue => e
     @logger.error("Error processing file #{file_remote_info[:file_url]}: #{e.message}")
   end
-  
+
   def process_page_requisites(file_path, parent_remote_info)
     return unless File.exist?(file_path)
 
@@ -785,7 +827,7 @@ class WaybackMachineDownloader
     # prepare base URI for resolving relative paths
     parent_raw = parent_remote_info[:file_url]
     parent_raw = "http://#{parent_raw}" unless parent_raw.match?(/^https?:\/\//)
-    
+
     begin
       base_uri = URI(parent_raw)
       # calculate the "root" host of the site we are downloading to compare later
@@ -819,7 +861,7 @@ class WaybackMachineDownloader
         path = resolved_uri.path
         ext = File.extname(path).downcase
         if ext.empty? || ['.html', '.htm', '.php', '.asp', '.aspx'].include?(ext)
-           next 
+           next
         end
 
         # construct the original URL to query the Wayback API
@@ -890,7 +932,7 @@ class WaybackMachineDownloader
     rescue Errno::EEXIST, Errno::ENOTDIR => e
       file_already_existing = nil
       check_path = dir_path
-      
+
       # walk up the path to find the specific file that is blocking directory creation
       while check_path != "." && check_path != "/"
         if File.exist?(check_path) && !File.directory?(check_path)
@@ -905,11 +947,11 @@ class WaybackMachineDownloader
       if file_already_existing
         file_already_existing_temporary = file_already_existing + '.temp'
         file_already_existing_permanent = file_already_existing + '/index.html'
-        
+
         FileUtils::mv file_already_existing, file_already_existing_temporary
         FileUtils::mkdir_p file_already_existing
         FileUtils::mv file_already_existing_temporary, file_already_existing_permanent
-        
+
         puts "#{file_already_existing} -> #{file_already_existing_permanent}"
         # retry the directory creation now that the path is clear
         structure_dir_path dir_path
@@ -922,12 +964,12 @@ class WaybackMachineDownloader
   def rewrite_local_files
     puts "Scanning #{backup_path} for files to rewrite..."
     files = Dir.glob(File.join(backup_path, "**/*.{html,htm,css,js,php,asp,aspx,jsp}"))
-    
+
     puts "Found #{files.size} files. Rewriting links for local browsing..."
-    
+
     pool = Concurrent::FixedThreadPool.new(@threads_count)
     progress = Concurrent::AtomicFixnum.new(0)
-    
+
     files.each do |file_path|
       pool.post do
         rewrite_urls_to_relative(file_path)
@@ -935,7 +977,7 @@ class WaybackMachineDownloader
         print "\rProgress: #{current}/#{files.size}" if current % 100 == 0
       end
     end
-    
+
     pool.shutdown
     pool.wait_for_termination
     puts "\nFinished rewriting all files."
@@ -943,9 +985,9 @@ class WaybackMachineDownloader
 
   def rewrite_urls_to_relative(file_path)
     return unless File.exist?(file_path)
-    
+
     file_ext = File.extname(file_path).downcase
-    
+
     begin
       content = File.binread(file_path)
 
@@ -953,13 +995,13 @@ class WaybackMachineDownloader
       if file_ext == '.html' || file_ext == '.htm' || file_ext == '.php' || file_ext == '.asp'
         encoding_match = content.match(/<meta.*?charset=["'\s]?([^"'\s>;]+)/i)
         encoding_name = encoding_match ? encoding_match.captures.first : 'UTF-8'
-        
+
         begin
           encoding = Encoding.find(encoding_name)
         rescue ArgumentError
           encoding = Encoding::UTF_8
         end
-        
+
         content.force_encoding(encoding)
       else
         content.force_encoding('UTF-8')
@@ -976,21 +1018,21 @@ class WaybackMachineDownloader
 
       # URLs in HTML attributes
       content = rewrite_html_attr_urls(content)
-      
+
       # URLs in CSS
       content = rewrite_css_urls(content)
-      
+
       # URLs in JavaScript
       content = rewrite_js_urls(content)
 
       root_prefix = site_root_relative_prefix(file_path)
-      
+
       # rewrite root-absolute links to paths relative to the downloaded site root
       content.gsub!(/(\s(?:href|src|action|data-src|data-url)=["'])\/([^"'\/][^"']*)(["'])/i) do
         prefix, path, suffix = $1, $2, $3
         "#{prefix}#{root_prefix}#{path}#{suffix}"
       end
-      
+
       # apply the same root-relative conversion to CSS url(...) references
       content.gsub!(/url\(\s*["']?\/([^"'\)\/][^"'\)]*?)["']?\s*\)/i) do
         path = $1
@@ -1030,7 +1072,7 @@ class WaybackMachineDownloader
     file_url = file_remote_info[:file_url].encode(current_encoding)
     file_id = file_remote_info[:file_id]
     file_timestamp = file_remote_info[:timestamp]
-    
+
     # sanitize file_id to ensure it is a valid path component
     raw_path_elements = file_id.split('/')
 
@@ -1044,7 +1086,7 @@ class WaybackMachineDownloader
         element
       end
     end
-    
+
     current_backup_path = backup_path
 
     if file_id == ""
@@ -1159,7 +1201,7 @@ class WaybackMachineDownloader
     end
     logger
   end
-    
+
   # safely sanitize a file id (or id+timestamp)
   def sanitize_and_prepare_id(raw, file_url)
     return nil if raw.nil?
@@ -1303,11 +1345,11 @@ class WaybackMachineDownloader
 
       if HTTPX_AVAILABLE && connection.is_a?(HTTPX::Session)
         response = connection.get(wayback_url)
-        
+
         raise response.error if response.is_a?(HTTPX::ErrorResponse)
-        
+
         code = response.status
-        
+
         save_response_body = lambda do
           if response.respond_to?(:copy_to)
             response.copy_to(file_path)
@@ -1397,6 +1439,7 @@ class WaybackMachineDownloader
   end
 
   def cleanup
+    flush_db
     @connection_pool.shutdown
 
     if @failed_downloads.any?
