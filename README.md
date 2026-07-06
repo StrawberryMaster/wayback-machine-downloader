@@ -128,7 +128,7 @@ STATE_DB_FILENAME = '.downloaded.txt'  # Tracks completed downloads
 | `-t TS`, `--to TS`  | Stop at timestamp |
 | `-e`, `--exact-url`     | Download exact URL only |
 | `-r`, `--rewritten`     | Download rewritten Wayback Archive files only |
-| `--rt`, `--retry NUM` | Number of tries in case a download fails (default: 1) |
+| `--rt`, `--retry NUM` | Number of tries in case a download fails (default: 3) |
 | `--delay SECONDS` | Delay between downloads in seconds (default: 0)  |
 | `--recursive-subdomains` | Scan downloaded HTML/CSS/JS for subdomains of the base domain and download them too |
 | `--subdomain-depth N` | How many discovery rounds to perform when recursively pulling subdomains |
@@ -181,9 +181,9 @@ Grabs the site and any discovered subdomains one level deep, rewriting links to 
 
 **Rewrite links to work locally without downloading** (EXPERIMENTAL)
 ```bash
-ruby wayback_machine_downloader --local-only ./websites/example.com/
+ruby wayback_machine_downloader --local-only example.com
 ```
-Useful if you already have the files downloaded and just want to rewrite the links to work locally without running the download process again. This will not download any files, only rewrite links in existing HTML/CSS/JS files. Do make sure to point it to the correct directory (e.g., `./websites/example.com/`), or the folder you save your downloaded files in.
+Useful if you already have the files downloaded and just want to rewrite the links to work locally without running the download process again. This will not download any files, only rewrite links in existing HTML/CSS/JS files. If you want to have these files in a separate directory, make sure to point it to the correct directory (e.g., `wayback_machine_downloader --local-only example.com --directory /path/to/custom/dir`), or the folder you save your downloaded files in.
 
 ---
 

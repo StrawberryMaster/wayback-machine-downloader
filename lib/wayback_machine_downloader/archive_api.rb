@@ -36,12 +36,12 @@ module ArchiveAPI
       if HTTPX_AVAILABLE && http.is_a?(HTTPX::Session)
         response = http.get(request_url)
         raise response.error if response.is_a?(HTTPX::ErrorResponse)
-        
+
         code = response.status
         body = response.body.to_s.strip
       else
         request = Net::HTTP::Get.new(request_url)
-        request["User-Agent"] = "wmd-straw/#{WaybackMachineDownloader::VERSION rescue '2.4.7'}"
+        request["User-Agent"] = "wmd-straw/#{WaybackMachineDownloader::VERSION rescue '2.4.8'}"
         request["Connection"] = "keep-alive"
         request["Accept-Encoding"] = "gzip, deflate"
         response = http.request(request)
@@ -69,13 +69,13 @@ module ArchiveAPI
     rescue Net::ReadTimeout, Net::OpenTimeout, StandardError => e
       if retries < max_retries
         retries += 1
-        
+
         jitter = rand(0.0..1.0)
         sleep_time = (base_delay * (2 ** (retries - 1))) + jitter
-        
+
         warn "Error talking to Wayback CDX API (#{e.class}: #{e.message}) for #{url}. " \
              "Retrying in #{sleep_time.round(2)}s (attempt #{retries}/#{max_retries})..."
-             
+
         sleep(sleep_time)
         retry
       else
