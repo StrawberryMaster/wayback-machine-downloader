@@ -1,7 +1,47 @@
 require 'json'
 require 'uri'
+require 'time'
+require 'thread'
 
 module ArchiveAPI
+  DEFAULT_RATE_LIMIT_COOLDOWN = 30.0
+
+  class RateLimitError < StandardError
+    attr_reader :retry_after
+
+    def initialize(message, retry_after = nil)
+      super(message)
+      @retry_after = retry_after
+    end
+  end
+
+  @cdx_rate_limit_mutex = Mutex.new
+  @cdx_rate_limit_until = Time.at(0)
+
+  class << self
+    def wait_for_cdx_cooldown
+      wait = @cdx_rate_limit_mutex.synchronize do
+        [@cdx_rate_limit_until - Time.now, 0].max
+      end
+      sleep(wait) if wait.positive?
+    end
+
+    def extend_cdx_cooldown(seconds)
+      seconds = seconds.to_f
+      return if seconds <= 0
+
+      @cdx_rate_limit_mutex.synchronize do
+        candidate = Time.now + seconds
+        @cdx_rate_limit_until = candidate if candidate > @cdx_rate_limit_until
+      end
+    end
+
+    def reset_cdx_cooldown
+      @cdx_rate_limit_mutex.synchronize do
+        @cdx_rate_limit_until = Time.at(0)
+      end
+    end
+  end
 
   def get_raw_list_from_api(url, page_index, http)
     # Automatically append /* for host-only URLs
@@ -33,6 +73,11 @@ module ArchiveAPI
     base_delay = WaybackMachineDownloader::RETRY_DELAY rescue 2
 
     begin
+      # A 429 from any CDX request pauses every worker using this process. Without
+      # this shared gate, one worker backs off while the others continue to hit
+      # the API and prolong the rate limit.
+      ArchiveAPI.wait_for_cdx_cooldown
+
       if HTTPX_AVAILABLE && http.is_a?(HTTPX::Session)
         response = http.get(request_url)
         raise response.error if response.is_a?(HTTPX::ErrorResponse)
@@ -60,27 +105,50 @@ module ArchiveAPI
         rescue JSON::ParserError => e
           raise "Malformed JSON response: #{e.message}"
         end
-      when 429, 500, 502, 503, 504
+      when 429
+        retry_after = retry_after_seconds(response)
+        raise RateLimitError.new(
+          "Server error 429: #{response.respond_to?(:message) ? response.message : 'Too Many Requests'}",
+          retry_after
+        )
+      when 500, 502, 503, 504
         raise "Server error #{code}: #{response.respond_to?(:message) ? response.message : ''}"
       else
-        warn "Unexpected API response #{code} for #{url}"
-        []
+        raise "Unexpected API response #{code} for #{url}"
       end
     rescue Net::ReadTimeout, Net::OpenTimeout, StandardError => e
       if retries < max_retries
         retries += 1
-
         jitter = rand(0.0..1.0)
-        sleep_time = (base_delay * (2 ** (retries - 1))) + jitter
 
-        warn "Error talking to Wayback CDX API (#{e.class}: #{e.message}) for #{url}. " \
-             "Retrying in #{sleep_time.round(2)}s (attempt #{retries}/#{max_retries})..."
+        if e.is_a?(RateLimitError)
+          # Prefer the server-provided Retry-After value. When absent, use a
+          # conservative process-wide cooldown instead of the short per-request
+          # retry delay used for transient 5xx/network errors.
+          fallback = [DEFAULT_RATE_LIMIT_COOLDOWN, base_delay * (2 ** (retries - 1))].max
+          cooldown = e.retry_after || fallback
+          cooldown += jitter unless e.retry_after
+          ArchiveAPI.extend_cdx_cooldown(cooldown)
 
-        sleep(sleep_time)
+          warn "Wayback CDX API rate limited (429) for #{url}. " \
+               "Pausing all CDX requests for #{cooldown.round(2)}s " \
+               "(attempt #{retries}/#{max_retries})..."
+        else
+          sleep_time = (base_delay * (2 ** (retries - 1))) + jitter
+
+          warn "Error talking to Wayback CDX API (#{e.class}: #{e.message}) for #{url}. " \
+               "Retrying in #{sleep_time.round(2)}s (attempt #{retries}/#{max_retries})..."
+
+          sleep(sleep_time)
+        end
+
         retry
       else
         warn "Giving up on Wayback CDX API for #{url} after #{max_retries} attempts. (Last error: #{e.message})"
-        []
+        # Do not turn transport/API failures into an empty result. Callers use
+        # [] as an end-of-pagination signal and may otherwise persist an
+        # incomplete .cdx.json cache as if it were complete.
+        raise
       end
     end
   end
@@ -96,6 +164,23 @@ module ArchiveAPI
   end
 
   private
+
+  def retry_after_seconds(response)
+    raw = if HTTPX_AVAILABLE && defined?(HTTPX::Response) && response.is_a?(HTTPX::Response)
+            response.headers['retry-after']
+          elsif response.respond_to?(:[])
+            response['Retry-After'] || response['retry-after']
+          end
+
+    value = Array(raw).first.to_s.strip
+    return nil if value.empty?
+    return value.to_f if value.match?(/\A\d+(?:\.\d+)?\z/)
+
+    delay = Time.httpdate(value) - Time.now
+    delay.positive? ? delay : 0.0
+  rescue ArgumentError
+    nil
+  end
 
   def decompress_body(response)
     body = response.body.to_s
