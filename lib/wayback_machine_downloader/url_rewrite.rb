@@ -2,7 +2,12 @@
 
 module URLRewrite
   # server-side extensions that should work locally
-  SERVER_SIDE_EXTS = %w[.php .asp .aspx .jsp .cgi .pl .py].freeze
+  SERVER_SIDE_EXTS = %w[
+    .php .php3 .phtml 
+    .asp .aspx .ashx .asmx .asa 
+    .jsp .jspx .do .action 
+    .cgi .pl .py .cfm .shtml
+  ].freeze
 
   def rewrite_html_attr_urls(content)
     # rewrite URLs to relative paths
