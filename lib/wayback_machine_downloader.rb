@@ -785,7 +785,7 @@ class WaybackMachineDownloader
 
       append_to_db(file_remote_info[:file_id])
 
-      if @page_requisites && File.extname(existing_path) =~ /\.(html?|php|asp|aspx|jsp)$/i
+      if @page_requisites && File.extname(existing_path) =~ /\.(html?|shtml|php|asp|aspx|ashx|jsp|do|action|cgi|pl|cfm)$/i
         process_page_requisites(existing_path, file_remote_info)
       end
       return
@@ -963,7 +963,7 @@ class WaybackMachineDownloader
 
   def rewrite_local_files
     puts "Scanning #{backup_path} for files to rewrite..."
-    files = Dir.glob(File.join(backup_path, "**/*.{html,htm,css,js,php,asp,aspx,jsp}"))
+    files = Dir.glob(File.join(backup_path, "**/*.{html,htm,shtml,css,js,php,asp,aspx,ashx,jsp,do,action,cgi,pl,cfm}"))
 
     puts "Found #{files.size} files. Rewriting links for local browsing..."
 
@@ -1115,7 +1115,7 @@ class WaybackMachineDownloader
 
       case status
       when :saved
-        if @rewrite && File.extname(file_path) =~ /\.(html?|css|js)$/i
+        if @rewrite && File.extname(file_path) =~ /\.(html?|shtml|css|js|php|asp|aspx|jsp|cgi|pl)$/i
           rewrite_urls_to_relative(file_path)
         end
         return ["#{color("[SAVED]", :green)}  #{file_url} (#{@processed_file_count + 1}/#{@total_to_download})", file_path]
