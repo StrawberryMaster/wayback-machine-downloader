@@ -2,11 +2,12 @@ module PageRequisites
   # regex to find links in href, src, url(), and srcset
   # this ignores data: URIs, mailto:, and anchors
   ASSET_REGEX = /(?:(href|src|data-src|data-url)\s*=\s*["']([^"']+)["'])|url\(\s*["']?([^"'\)]+)["']?\s*\)|srcset\s*=\s*["']([^"']+)["']/i
-  PAGE_EXTENSIONS = %w[
-    .html .htm
+ PAGE_EXTENSIONS = %w[
+    .html .htm .shtml .shtm .xhtml
+    .asp .aspx .asa .ashx .asmx
     .php .php3 .php4 .php5 .phtml
-    .asp .aspx
-    .jsp .jspx
+    .jsp .jspx .do .action
+    .cgi .pl .cfm .dll
   ].freeze
 
   def self.extract(html_content)
