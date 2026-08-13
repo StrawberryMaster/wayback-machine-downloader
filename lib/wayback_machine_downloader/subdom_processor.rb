@@ -12,7 +12,7 @@ module SubdomainProcessor
     @subdomain_queue = Queue.new
     
     # scan downloaded files for subdomain links
-    initial_files = Dir.glob(File.join(backup_path, "**/*.{html,htm,css,js}"))
+    initial_files = Dir.glob(File.join(backup_path, "**/*.{html,htm,shtml,css,js,asp,aspx,ashx,php,jsp,cgi,pl}"))
     puts "Scanning #{initial_files.size} downloaded files for subdomain links..."
     
     subdomains_found = scan_files_for_subdomains(initial_files, base_domain)
@@ -126,7 +126,7 @@ module SubdomainProcessor
       # if we need to go deeper, scan the newly downloaded files
       if depth + 1 < max_depth
         # get all files in the subdomains directory
-        new_files = Dir.glob(File.join(backup_path, "subdomains", "**/*.{html,htm,css,js}"))
+        new_files = Dir.glob(File.join(backup_path, "subdomains", "**/*.{html,htm,shtml,css,js,asp,aspx,ashx,php,jsp,cgi,pl}"))
         new_subdomains = scan_files_for_subdomains(new_files, base_domain)
         
         # filter out already processed subdomains
