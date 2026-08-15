@@ -351,50 +351,34 @@ class WaybackMachineDownloader
       end
     end
 
-    # Fetch additional pages if the exact URL flag is not set and the first page wasn't empty
+    # fetch additional pages if exact URL flag is not set and the first page wasn't empty
     unless @exact_url || snapshot_list_to_consider.empty?
       page_index = 1
       batch_size = [@threads_count, 5].min
       continue_fetching = true
       fetch_pool = Concurrent::FixedThreadPool.new([@threads_count, 1].max)
+
       begin
         while continue_fetching && page_index < @maximum_pages
-          # Determine the range of pages to fetch in this batch
+          # determine the range of pages to fetch in this batch
           end_index = [page_index + batch_size, @maximum_pages].min
           current_batch = (page_index...end_index).to_a
 
-          # Create futures for concurrent API calls
           futures = current_batch.map do |page|
             Concurrent::Future.execute(executor: fetch_pool) do
               result = nil
               @connection_pool.with_connection do |connection|
                 result = get_raw_list_from_api(@base_url, page, connection)
               end
-              result ||= []
-              [page, result]
+              [page, result || []]
             end
           end
 
-          results = []
+          results = futures.map(&:value).compact.sort_by { |p, _| p }
 
-          futures.each do |future|
-            begin
-              val = future.value
-              # only append if valid
-              if val && val.is_a?(Array) && val.first.is_a?(Integer)
-                results << val
-              end
-            rescue => e
-              puts "\nError fetching page #{future}: #{e.message}"
-            end
-          end
-
-          # Sort results by page number to maintain order
-          results.sort_by! { |page, _| page }
-
-          # Process results and check for empty pages
           results.each do |page, result|
-            if result.nil? || result.empty?
+            if result.empty?
+              # only stop if we received an empty result on sequential progression
               continue_fetching = false
               break
             else
@@ -407,7 +391,6 @@ class WaybackMachineDownloader
           end
 
           page_index = end_index
-
           sleep(RATE_LIMIT) if continue_fetching
         end
       ensure
@@ -434,6 +417,19 @@ class WaybackMachineDownloader
     snapshot_list_to_consider
   end
 
+  def extract_path_and_query(file_url)
+    return "" if file_url.nil? || file_url.empty?
+    normalized = file_url.match?(%r{\Ahttps?://}i) ? file_url : "http://#{file_url}"
+    uri = URI.parse(normalized)
+    # returns path + query
+    path = uri.path.to_s
+    path += "?#{uri.query}" if uri.query && !uri.query.empty?
+    path.sub(%r{\A/}, '')
+  rescue URI::InvalidURIError
+    # for ill-formed URLs
+    file_url.sub(%r{\Ahttps?://[^/]+/?}i, '').sub(%r{\A[^/]+/?}, '')
+  end
+
   # Get a composite snapshot file list for a specific timestamp
   def get_composite_snapshot_file_list(target_timestamp)
     file_versions = {}
@@ -442,7 +438,7 @@ class WaybackMachineDownloader
       next if file_timestamp.to_i > target_timestamp
 
       # allow empty path by treating missing tail as empty string
-      raw_tail = file_url.split('/')[3..-1]&.join('/') || ''
+      raw_tail = extract_path_and_query(file_url)
       file_id = sanitize_and_prepare_id(raw_tail, file_url)
       next if file_id.nil?
       next if match_exclude_filter(file_url)
@@ -467,7 +463,7 @@ class WaybackMachineDownloader
     get_all_snapshots_to_consider.each do |file_timestamp, file_url|
       next unless file_url.include?('/')
 
-      raw_tail = file_url.split('/')[3..-1]&.join('/') || ''
+      raw_tail = extract_path_and_query(file_url)
       file_id = sanitize_and_prepare_id(raw_tail, file_url)
       if file_id.nil?
         puts "Malformed file url, ignoring: #{file_url}"
@@ -482,7 +478,7 @@ class WaybackMachineDownloader
         elsif !match_only_filter(file_url)
           puts "File url doesn't match only filter, ignoring: #{file_url}"
         elsif file_list_curated[file_id]
-          unless file_list_curated[file_id][:timestamp] > file_timestamp
+          unless file_list_curated[file_id][:timestamp].to_i > file_timestamp.to_i
             file_list_curated[file_id] = { file_url: file_url, timestamp: file_timestamp }
           end
         else
@@ -498,7 +494,7 @@ class WaybackMachineDownloader
     get_all_snapshots_to_consider.each do |file_timestamp, file_url|
       next unless file_url.include?('/')
 
-      raw_tail = file_url.split('/')[3..-1]&.join('/') || ''
+      raw_tail = extract_path_and_query(file_url)
       file_id = sanitize_and_prepare_id(raw_tail, file_url)
       if file_id.nil?
         puts "Malformed file url, ignoring: #{file_url}"

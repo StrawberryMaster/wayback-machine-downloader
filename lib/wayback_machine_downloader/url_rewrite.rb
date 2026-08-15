@@ -66,10 +66,19 @@ module URLRewrite
 
   def normalize_path_for_local(path)
     return "./index.html" if path.empty? || path == "/"
-    
-    # handle query strings - they're already part of the filename
-    path = path.split('?').first if path.include?('?')
-    
+
+    path_part, query_part = path.split('?', 2)
+    if query_part && !query_part.empty?
+      q_digest = Digest::SHA256.hexdigest(query_part)[0, 12]
+      if path_part.include?('.')
+        pre, _sep, post = path_part.rpartition('.')
+        path_part = "#{pre}__q#{q_digest}.#{post}"
+      else
+        path_part = "#{path_part}__q#{q_digest}"
+      end
+    end
+    path = path_part
+
     # check if this is a server-side script
     ext = File.extname(path).downcase
     if SERVER_SIDE_EXTS.include?(ext)
@@ -84,7 +93,7 @@ module URLRewrite
         path = "#{path.chomp('/')}/index.html"
       end
     end
-    
+
     path
   end
 end
