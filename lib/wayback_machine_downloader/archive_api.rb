@@ -48,23 +48,25 @@ module ArchiveAPI
     # This is a workaround for an issue with the API and *some* domains.
     # See https://github.com/StrawberryMaster/wayback-machine-downloader/issues/6
     # But don't do this when exact_url flag is set, and never append twice
+    normalized_url = url.to_s.strip
+    
+    # strip protocol for CDX query
+    clean_url = normalized_url.sub(%r{\Ahttps?://}i, '')
+    
+    # ensure wildcard/matchType for domain-wide crawling
     match_type = nil
-    if url && !@exact_url
-      normalized_url = url.to_s
-      has_wildcard = normalized_url.include?('*')
-      host_and_rest = normalized_url
-        .sub(/\Ahttps?:\/\//i, '')
-        .split(/[?#]/, 2)
-        .first
-      has_path = host_and_rest.include?('/')
-
-      unless has_wildcard || has_path
+    unless @exact_url || clean_url.include?('*')
+      if clean_url.end_with?('/')
+        clean_url = "#{clean_url}*"
+      elsif !clean_url.include?('/')
         match_type = "prefix"
+      else
+        clean_url = "#{clean_url}/*"
       end
     end
 
     request_url = URI("https://web.archive.org/cdx/search/cdx")
-    params = [["output", "json"], ["url", url]] + parameters_for_api(page_index)
+    params = [["output", "json"], ["url", clean_url]] + parameters_for_api(page_index)
     params << ["matchType", match_type] if match_type
     request_url.query = URI.encode_www_form(params)
 
@@ -159,7 +161,7 @@ module ArchiveAPI
     parameters.push(["filter", "statuscode:2..|30[12378]"]) unless @all
     parameters.push(["from", @from_timestamp.to_s]) if @from_timestamp && @from_timestamp != 0
     parameters.push(["to", @to_timestamp.to_s]) if @to_timestamp && @to_timestamp != 0
-    parameters.push(["page", page_index]) if page_index
+    parameters.push(["page", page_index.to_s]) if page_index && page_index > 0
     parameters
   end
 

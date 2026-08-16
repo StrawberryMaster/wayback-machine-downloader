@@ -987,8 +987,8 @@ class WaybackMachineDownloader
     begin
       content = File.binread(file_path)
 
-      # detect encoding for HTML files
-      if file_ext == '.html' || file_ext == '.htm' || file_ext == '.php' || file_ext == '.asp'
+      # detect encoding for HTML/server-rendered files
+      if %w[.html .htm .php .asp .jsp .shtml].include?(file_ext)
         encoding_match = content.match(/<meta.*?charset=["'\s]?([^"'\s>;]+)/i)
         encoding_name = encoding_match ? encoding_match.captures.first : 'UTF-8'
 
@@ -1012,28 +1012,16 @@ class WaybackMachineDownloader
         end
       end
 
-      # URLs in HTML attributes
-      content = rewrite_html_attr_urls(content)
-
-      # URLs in CSS
-      content = rewrite_css_urls(content)
-
-      # URLs in JavaScript
-      content = rewrite_js_urls(content)
-
       root_prefix = site_root_relative_prefix(file_path)
 
-      # rewrite root-absolute links to paths relative to the downloaded site root
-      content.gsub!(/(\s(?:href|src|action|data-src|data-url)=["'])\/([^"'\/][^"']*)(["'])/i) do
-        prefix, path, suffix = $1, $2, $3
-        "#{prefix}#{root_prefix}#{path}#{suffix}"
-      end
+      # URLs in HTML attributes
+      content = rewrite_html_attr_urls(content, root_prefix)
 
-      # apply the same root-relative conversion to CSS url(...) references
-      content.gsub!(/url\(\s*["']?\/([^"'\)\/][^"'\)]*?)["']?\s*\)/i) do
-        path = $1
-        "url(\"#{root_prefix}#{path}\")"
-      end
+      # URLs in CSS
+      content = rewrite_css_urls(content, root_prefix)
+
+      # URLs in JavaScript
+      content = rewrite_js_urls(content, root_prefix)
 
       # save the modified content back to the file
       File.binwrite(file_path, content)
