@@ -107,6 +107,9 @@ module ArchiveAPI
         rescue JSON::ParserError => e
           raise "Malformed JSON response: #{e.message}"
         end
+      when 400
+        # CDX API occasionally returns 400 when page index exceeds total available pages (that is, end of pagination)
+        return []
       when 429
         retry_after = retry_after_seconds(response)
         raise RateLimitError.new(
