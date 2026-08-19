@@ -147,7 +147,20 @@ class ConnectionPool
       http.open_timeout = DEFAULT_TIMEOUT
       http.keep_alive_timeout = 30
       http.max_retries = MAX_RETRIES
-      http.start
+
+      retries = 0
+      begin
+        http.start
+      rescue Net::OpenTimeout, Net::ReadTimeout, Errno::ECONNRESET, Errno::ETIMEDOUT, SocketError => e
+        if retries < MAX_RETRIES
+          retries += 1
+          sleep(2 * retries)
+          retry
+        else
+          raise e
+        end
+      end
+
       http
     end
   end
