@@ -5,6 +5,7 @@ require 'thread'
 
 module ArchiveAPI
   DEFAULT_RATE_LIMIT_COOLDOWN = 30.0
+  DEFAULT_CDX_INTERVAL = 2.5 # 1 request every 2.5 seconds
 
   class RateLimitError < StandardError
     attr_reader :retry_after
@@ -15,30 +16,48 @@ module ArchiveAPI
     end
   end
 
-  @cdx_rate_limit_mutex = Mutex.new
-  @cdx_rate_limit_until = Time.at(0)
+  @cdx_mutex = Mutex.new
+  @cdx_cv = ConditionVariable.new
+  @next_allowed_cdx_at = 0.0
+  @cdx_interval = DEFAULT_CDX_INTERVAL
 
   class << self
-    def wait_for_cdx_cooldown
-      wait = @cdx_rate_limit_mutex.synchronize do
-        [@cdx_rate_limit_until - Time.now, 0].max
+    attr_accessor :cdx_interval
+
+    # pace CDX requests to avoid exceeding the rate limit
+    def pace_cdx_request
+      @cdx_mutex.synchronize do
+        loop do
+          now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          if now < @next_allowed_cdx_at
+            wait_time = @next_allowed_cdx_at - now
+            @cdx_cv.wait(@cdx_mutex, wait_time)
+          else
+            interval = @cdx_interval || DEFAULT_CDX_INTERVAL
+            @next_allowed_cdx_at = now + interval
+            return
+          end
+        end
       end
-      sleep(wait) if wait.positive?
     end
 
+    # extend the cooldown period for CDX requests, e.g., after receiving a 429 response
     def extend_cdx_cooldown(seconds)
       seconds = seconds.to_f
       return if seconds <= 0
 
-      @cdx_rate_limit_mutex.synchronize do
-        candidate = Time.now + seconds
-        @cdx_rate_limit_until = candidate if candidate > @cdx_rate_limit_until
+      @cdx_mutex.synchronize do
+        now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        candidate = now + seconds
+        @next_allowed_cdx_at = candidate if candidate > @next_allowed_cdx_at
+        @cdx_cv.broadcast
       end
     end
 
-    def reset_cdx_cooldown
-      @cdx_rate_limit_mutex.synchronize do
-        @cdx_rate_limit_until = Time.at(0)
+    def reset_cdx_limiter
+      @cdx_mutex.synchronize do
+        @next_allowed_cdx_at = 0.0
+        @cdx_cv.broadcast
       end
     end
   end
@@ -52,7 +71,6 @@ module ArchiveAPI
     
     # strip protocol for CDX query
     clean_url = normalized_url.sub(%r{\Ahttps?://}i, '')
-    
     # ensure wildcard/matchType for domain-wide crawling
     match_type = nil
     unless @exact_url || clean_url.include?('*')
@@ -72,13 +90,11 @@ module ArchiveAPI
 
     retries = 0
     max_retries = (@max_retries || 3)
-    base_delay = WaybackMachineDownloader::RETRY_DELAY rescue 2
+    base_delay = 2
 
     begin
-      # A 429 from any CDX request pauses every worker using this process. Without
-      # this shared gate, one worker backs off while the others continue to hit
-      # the API and prolong the rate limit.
-      ArchiveAPI.wait_for_cdx_cooldown
+      # acquire slot from the process-wide proactive pacer before sending request
+      ArchiveAPI.pace_cdx_request
 
       if HTTPX_AVAILABLE && http.is_a?(HTTPX::Session)
         response = http.get(request_url)
@@ -127,32 +143,24 @@ module ArchiveAPI
         jitter = rand(0.0..1.0)
 
         if e.is_a?(RateLimitError)
-          # Prefer the server-provided Retry-After value. When absent, use a
-          # conservative process-wide cooldown instead of the short per-request
-          # retry delay used for transient 5xx/network errors.
+          # if the server provided a Retry-After header, use that; otherwise, use an exponential backoff with a minimum cooldown
           fallback = [DEFAULT_RATE_LIMIT_COOLDOWN, base_delay * (2 ** (retries - 1))].max
-          cooldown = e.retry_after || fallback
-          cooldown += jitter unless e.retry_after
+          cooldown = (e.retry_after || fallback) + (e.retry_after ? 0 : jitter)
           ArchiveAPI.extend_cdx_cooldown(cooldown)
 
           warn "Wayback CDX API rate limited (429) for #{url}. " \
-               "Pausing all CDX requests for #{cooldown.round(2)}s " \
+               "Pausing CDX requests for #{cooldown.round(2)}s " \
                "(attempt #{retries}/#{max_retries})..."
         else
           sleep_time = (base_delay * (2 ** (retries - 1))) + jitter
-
           warn "Error talking to Wayback CDX API (#{e.class}: #{e.message}) for #{url}. " \
                "Retrying in #{sleep_time.round(2)}s (attempt #{retries}/#{max_retries})..."
-
           sleep(sleep_time)
         end
 
         retry
       else
         warn "Giving up on Wayback CDX API for #{url} after #{max_retries} attempts. (Last error: #{e.message})"
-        # Do not turn transport/API failures into an empty result. Callers use
-        # [] as an end-of-pagination signal and may otherwise persist an
-        # incomplete .cdx.json cache as if it were complete.
         raise
       end
     end

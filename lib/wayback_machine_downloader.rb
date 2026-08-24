@@ -330,12 +330,8 @@ class WaybackMachineDownloader
       puts "Loading snapshot list from #{cdx_path}"
       begin
         snapshot_list_to_consider = JSON.parse(File.read(cdx_path))
-        puts "Loaded #{snapshot_list_to_consider.length} snapshots from cache."
-        puts
+        puts "Loaded #{snapshot_list_to_consider.length} snapshots from cache.\n\n"
         return Concurrent::Array.new(snapshot_list_to_consider)
-      rescue JSON::ParserError => e
-        puts "Error reading snapshot cache file #{cdx_path}: #{e.message}. Refetching..."
-        FileUtils.rm_f(cdx_path)
       rescue => e
         puts "Error loading snapshot cache #{cdx_path}: #{e.message}. Refetching..."
         FileUtils.rm_f(cdx_path)
@@ -343,72 +339,38 @@ class WaybackMachineDownloader
     end
 
     snapshot_list_to_consider = Concurrent::Array.new
-    mutex = Mutex.new
-
-    # if snapshot_at is set, limit CDX queries to snapshots at or before that timestamp
     original_to = @to_timestamp
-    if @snapshot_at
-      @to_timestamp = @snapshot_at
-    end
+    @to_timestamp = @snapshot_at if @snapshot_at
 
     puts "Getting snapshot pages from Wayback Machine API..."
 
-    # Fetch the initial set of snapshots, sequentially
+    # fetch initial page (page 0)
     @connection_pool.with_connection do |connection|
       initial_list = get_raw_list_from_api(@base_url, 0, connection)
-      initial_list ||= []
-      mutex.synchronize do
+      if initial_list && !initial_list.empty?
         snapshot_list_to_consider.concat(initial_list)
         print "."
         $stdout.flush
       end
     end
 
-    # fetch additional pages if exact URL flag is not set and the first page wasn't empty
+    # sequentially fetch subsequent pages
     unless @exact_url || snapshot_list_to_consider.empty?
       page_index = 1
-      batch_size = [@threads_count, 5].min
-      continue_fetching = true
-      fetch_pool = Concurrent::FixedThreadPool.new([@threads_count, 1].max)
-
-      begin
-        while continue_fetching && page_index < @maximum_pages
-          # determine the range of pages to fetch in this batch
-          end_index = [page_index + batch_size, @maximum_pages].min
-          current_batch = (page_index...end_index).to_a
-
-          futures = current_batch.map do |page|
-            Concurrent::Future.execute(executor: fetch_pool) do
-              result = nil
-              @connection_pool.with_connection do |connection|
-                result = get_raw_list_from_api(@base_url, page, connection)
-              end
-              [page, result || []]
-            end
-          end
-
-          results = futures.map(&:value).compact.sort_by { |p, _| p }
-
-          results.each do |page, result|
-            if result.empty?
-              # only stop if we received an empty result on sequential progression
-              continue_fetching = false
-              break
-            else
-              mutex.synchronize do
-                snapshot_list_to_consider.concat(result)
-                print "."
-                $stdout.flush
-              end
-            end
-          end
-
-          page_index = end_index
-          sleep(RATE_LIMIT) if continue_fetching
+      while page_index < @maximum_pages
+        result = nil
+        @connection_pool.with_connection do |connection|
+          result = get_raw_list_from_api(@base_url, page_index, connection)
         end
-      ensure
-        fetch_pool.shutdown
-        fetch_pool.wait_for_termination
+
+        if result.nil? || result.empty?
+          break
+        else
+          snapshot_list_to_consider.concat(result)
+          print "."
+          $stdout.flush
+          page_index += 1
+        end
       end
     end
 
@@ -417,7 +379,7 @@ class WaybackMachineDownloader
     # save the fetched list to the cache file
     begin
       FileUtils.mkdir_p(File.dirname(cdx_path))
-      File.write(cdx_path, JSON.pretty_generate(snapshot_list_to_consider.to_a)) # Convert Concurrent::Array back to Array for JSON
+      File.write(cdx_path, JSON.pretty_generate(snapshot_list_to_consider.to_a))
       puts "Saved snapshot list to #{cdx_path}"
     rescue => e
       puts "Error saving snapshot cache to #{cdx_path}: #{e.message}"
