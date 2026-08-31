@@ -9,7 +9,7 @@ Gem::Specification.new do |s|
   s.files       = ["lib/wayback_machine_downloader.rb", "lib/wayback_machine_downloader/tidy_bytes.rb", "lib/wayback_machine_downloader/to_regex.rb", "lib/wayback_machine_downloader/archive_api.rb", "lib/wayback_machine_downloader/page_requisites.rb", "lib/wayback_machine_downloader/subdom_processor.rb", "lib/wayback_machine_downloader/url_rewrite.rb"]
   s.homepage    = "https://github.com/StrawberryMaster/wayback-machine-downloader"
   s.license     = "MIT"
-  s.required_ruby_version = ">= 3.4.3"
+  s.required_ruby_version = ">= 3.0.0"
   s.add_runtime_dependency "concurrent-ruby", "~> 1.3", ">= 1.3.6"
   s.add_development_dependency "rake", "~> 12.2"
   s.add_development_dependency "minitest", "~> 5.2"
