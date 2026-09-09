@@ -13,26 +13,26 @@ module URLRewrite
     target_host = current_host
 
     # rewrite URLs to relative paths
-    content = content.gsub(/(\s(?:href|src|action|data-src|data-url)=["'])https?:\/\/web\.archive\.org\/web\/\d+[a-z_]*\/https?:\/\/[^\/"']+(\/[^"']*)?(["'])/i) do
-      prefix, path, suffix = $1, ($2 || "/index.html"), $3
+    content = content.gsub(/(\s(?:href|src|action|data-src|data-url)=["'])([ \t\r\n]*)https?:\/\/web\.archive\.org\/web\/\d+[a-z_]*\/https?:\/\/[^\/"'\s]+(\/[^"'\s]*)?([ \t\r\n]*)(["'])/i) do
+      prefix, leading_space, path, trailing_space, suffix = $1, $2, ($3 || "/index.html"), $4, $5
       local = normalize_path_for_local(path, root_prefix)
-      "#{prefix}#{local}#{suffix}"
+      "#{prefix}#{leading_space}#{local}#{trailing_space}#{suffix}"
     end
 
     # rewrite absolute URLs to same domain as relative
     if target_host && !target_host.empty?
-      content = content.gsub(/(\s(?:href|src|action|data-src|data-url)=["'])https?:\/\/#{Regexp.escape(target_host)}(?::\d+)?(\/[^"']*)?(["'])/i) do
-        prefix, path, suffix = $1, ($2 || "/index.html"), $3
+      content = content.gsub(/(\s(?:href|src|action|data-src|data-url)=["'])([ \t\r\n]*)https?:\/\/#{Regexp.escape(target_host)}(?::\d+)?(\/[^"'\s]*)?([ \t\r\n]*)(["'])/i) do
+        prefix, leading_space, path, trailing_space, suffix = $1, $2, ($3 || "/index.html"), $4, $5
         local = normalize_path_for_local(path, root_prefix)
-        "#{prefix}#{local}#{suffix}"
+        "#{prefix}#{leading_space}#{local}#{trailing_space}#{suffix}"
       end
     end
 
     # rewrite root-relative URLs
-    content = content.gsub(/(\s(?:href|src|action|data-src|data-url)=["'])\/([^"'\/][^"']*)(["'])/i) do
-      prefix, path, suffix = $1, $2, $3
+    content = content.gsub(/(\s(?:href|src|action|data-src|data-url)=["'])([ \t\r\n]*)\/([^"'\/\s][^"'\s]*?)([ \t\r\n]*)(["'])/i) do
+      prefix, leading_space, path, trailing_space, suffix = $1, $2, $3, $4, $5
       local = normalize_path_for_local("/#{path}", root_prefix)
-      "#{prefix}#{local}#{suffix}"
+      "#{prefix}#{leading_space}#{local}#{trailing_space}#{suffix}"
     end
 
     content
@@ -69,10 +69,10 @@ module URLRewrite
 
   def rewrite_js_urls(content, root_prefix = './')
     # rewrite archive.org URLs in JavaScript strings
-    content.gsub(/(["'])https?:\/\/web\.archive\.org\/web\/\d+[a-z_]*\/https?:\/\/[^\/"']+(\/[^"']*)?(["'])/i) do
-      quote_start, path, quote_end = $1, ($2 || "/index.html"), $3
+    content.gsub(/(["'])([ \t\r\n]*)https?:\/\/web\.archive\.org\/web\/\d+[a-z_]*\/https?:\/\/[^\/"'\s]+(\/[^"'\s]*)?([ \t\r\n]*)(["'])/i) do
+      quote_start, leading_space, path, trailing_space, quote_end = $1, $2, ($3 || "/index.html"), $4, $5
       local = normalize_path_for_local(path, root_prefix)
-      "#{quote_start}#{local}#{quote_end}"
+      "#{quote_start}#{leading_space}#{local}#{trailing_space}#{quote_end}"
     end
   end
 

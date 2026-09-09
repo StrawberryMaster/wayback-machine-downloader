@@ -259,4 +259,22 @@ class WaybackMachineDownloaderTest < Minitest::Test
     FileUtils.rm_rf(tempdir)
   end
 
+  def test_local_rewrite_preserves_spaces_inside_html_url_attributes
+    tempdir = Dir.mktmpdir
+    downloader = WaybackMachineDownloader.new(
+      base_url: 'https://www.example.com',
+      directory: tempdir
+    )
+    downloader.instance_variable_set(:@logger, Logger.new(nil))
+
+    file_path = File.join(tempdir, 'index.html')
+    File.write(file_path, '<a href=" https://www.example.com/about/ ">About</a>')
+
+    downloader.rewrite_urls_to_relative(file_path)
+
+    assert_equal '<a href=" ./about/index.html ">About</a>', File.read(file_path)
+  ensure
+    FileUtils.rm_rf(tempdir)
+  end
+
 end
