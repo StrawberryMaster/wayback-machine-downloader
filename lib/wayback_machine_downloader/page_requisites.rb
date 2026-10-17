@@ -1,3 +1,5 @@
+require 'cgi'
+
 module PageRequisites
   # regex to find links in href, src, url(), and srcset
   # this ignores data: URIs, mailto:, and anchors
@@ -17,6 +19,7 @@ module PageRequisites
       attribute, attr_url, css_url, srcset_url = match
       url = attr_url || css_url || srcset_url
       next unless url
+      url = CGI.unescapeHTML(url)
 
       # href is also used for navigation. Do not turn links to server-rendered
       # pages into prerequisite CDX lookups; doing so can multiply API traffic
