@@ -69,17 +69,30 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "$HOME\tebako-bin"
-          gh release download --repo tamatebako/tebako --pattern "*windows*" --dir "$HOME\tebako-bin"
-          
+          New-Item -ItemType Directory -Force -Path "$HOME\tebako-dl"
+
+          gh release download --repo tamatebako/tebako `
+            --pattern "*x86_64-windows-ucrt*" `
+            --dir "$HOME\tebako-dl"
+
           $tools = @('tebako-bootstrap', 'tebako-pkg', 'tebako-shim', 'tebako', 'tfs')
-          Get-ChildItem -Path "$HOME\tebako-bin" -File | ForEach-Object {
-              foreach ($tool in $tools) {
-                  if ($_.Name -like "$tool-*windows*" -or $_.Name -like "$tool.*windows*") {
-                      Copy-Item $_.FullName "$HOME\tebako-bin\$tool.exe" -Force
-                      break
-                  }
+          foreach ($tool in $tools) {
+              $file = Get-ChildItem -Path "$HOME\tebako-dl" -File |
+                  Where-Object { 
+                      ($_.Name -like "$tool-*" -or $_.Name -like "$tool.*" -or $_.BaseName -eq $tool) -and
+                      $_.Extension -ne '.sig' -and 
+                      $_.Extension -ne '.sha256' 
+                  } |
+                  Select-Object -First 1
+
+              if ($file) {
+                  Copy-Item -Path $file.FullName -Destination "$HOME\tebako-bin\$tool.exe" -Force
+              } else {
+                  Write-Error "Failed to find binary for $tool in downloaded assets."
               }
           }
+
+          Remove-Item -Recurse -Force "$HOME\tebako-dl"
           "$HOME\tebako-bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
