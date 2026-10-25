@@ -19,7 +19,7 @@ module PageRequisites
       attribute, attr_url, css_url, srcset_url = match
       url = attr_url || css_url || srcset_url
       next unless url
-      url = CGI.unescapeHTML(url)
+      url = CGI.unescapeHTML(url).strip
 
       # href is also used for navigation. Do not turn links to server-rendered
       # pages into prerequisite CDX lookups; doing so can multiply API traffic
@@ -43,7 +43,7 @@ module PageRequisites
   def self.page_url?(url)
     path = begin
       URI.parse(url).path
-    rescue URI::InvalidURIError
+    rescue URI::Error
       url.to_s.split(/[?#]/, 2).first
     end
 
@@ -52,8 +52,9 @@ module PageRequisites
   end
 
   def self.valid_asset?(url)
-    return false if url.strip.empty?
-    return false if url.start_with?('data:', 'mailto:', '#', 'javascript:')
+    url = url.to_s.strip
+    return false if url.empty?
+    return false if url.match?(/\A(?:data|mailto|javascript):/i) || url.start_with?('#')
     true
   end
 end

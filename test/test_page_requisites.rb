@@ -25,4 +25,10 @@ class PageRequisitesTest < Minitest::Test
 
     assert_equal ['a.jpg?w=1&h=1', 'a.jpg?w=2&h=2'], assets
   end
+
+  def test_mailto_links_are_ignored_regardless_of_case_or_whitespace
+    html = '<a href=" MAILTO: ">Email</a><a href="mailto:user@example.com">Email</a>'
+
+    assert_empty PageRequisites.extract(html)
+  end
 end
