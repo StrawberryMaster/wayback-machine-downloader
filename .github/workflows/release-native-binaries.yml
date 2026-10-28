@@ -72,7 +72,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$HOME\tebako-dl"
 
           gh release download --repo tamatebako/tebako `
-            --pattern "*x86_64-windows-ucrt*" `
+            --pattern "*windows-ucrt64*" `
             --dir "$HOME\tebako-dl"
 
           $tools = @('tebako-bootstrap', 'tebako-pkg', 'tebako-shim', 'tebako', 'tfs')
@@ -81,6 +81,7 @@ jobs:
                   Where-Object { 
                       ($_.Name -like "$tool-*" -or $_.Name -like "$tool.*" -or $_.BaseName -eq $tool) -and
                       $_.Extension -ne '.sig' -and 
+                      $_.Extension -ne '.asc' -and
                       $_.Extension -ne '.sha256' 
                   } |
                   Select-Object -First 1
