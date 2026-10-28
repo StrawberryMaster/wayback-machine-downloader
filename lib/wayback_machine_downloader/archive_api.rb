@@ -104,7 +104,7 @@ module ArchiveAPI
         body = response.body.to_s.strip
       else
         request = Net::HTTP::Get.new(request_url)
-        request["User-Agent"] = "wmd-straw/#{WaybackMachineDownloader::VERSION rescue '2.4.8'}"
+        request["User-Agent"] = "wmd-straw/#{WaybackMachineDownloader::VERSION rescue '2.5.0'}"
         request["Connection"] = "keep-alive"
         request["Accept-Encoding"] = "gzip, deflate"
         response = http.request(request)
