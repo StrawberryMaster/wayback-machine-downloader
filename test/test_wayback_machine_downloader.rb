@@ -68,6 +68,40 @@ class WaybackMachineDownloaderTest < Minitest::Test
     assert_equal 'digest', collapse.last
   end
 
+  def test_sanitizer_replaces_dot_segments_after_decoding
+    sanitizer = @wayback_machine_downloader.method(:sanitize_and_prepare_id)
+
+    sanitized = sanitizer.call('%2E%2E/file.txt', 'https://www.example.com/%2E%2E/file.txt')
+    double_sanitized = sanitizer.call('%252e%252e/%252e%252e/file.txt', 'https://www.example.com/file.txt')
+
+    refute_includes sanitized, '..'
+    refute_includes double_sanitized, '..'
+  end
+
+  def test_local_path_for_file_id_rejects_paths_outside_backup
+    assert_nil @wayback_machine_downloader.send(:local_path_for_file_id, '../outside.txt')
+  end
+
+  def test_download_file_skips_paths_outside_backup
+    tempdir = Dir.mktmpdir
+    downloader = WaybackMachineDownloader.new(
+      base_url: 'https://www.example.com',
+      directory: tempdir
+    )
+    downloader.instance_variable_set(:@logger, Logger.new(nil))
+
+    result = downloader.send(
+      :download_file,
+      { file_url: 'https://www.example.com/..%2foutside.txt', file_id: '../outside.txt', timestamp: 20200101000000 },
+      nil
+    )
+
+    assert_includes result.first, '(unsafe path)'
+    refute File.exist?(File.join(File.dirname(tempdir), 'outside.txt'))
+  ensure
+    FileUtils.rm_rf(tempdir)
+  end
+
   def test_keep_duplicates_disables_collapse_digest
     keep_duplicates_downloader = WaybackMachineDownloader.new(
       base_url: 'https://www.example.com',

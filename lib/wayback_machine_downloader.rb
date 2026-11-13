@@ -1062,6 +1062,11 @@ class WaybackMachineDownloader
       file_path = File.join(dir_path, filename)
     end
 
+    unless path_inside_backup?(file_path)
+      @logger&.warn("Skipped #{file_url}: resolved path escapes backup directory")
+      return ["#{color("[SKIPPED]", :yellow)} #{file_url} (unsafe path)", nil]
+    end
+
     # check existence *before* download attempt
     # this handles cases where a file was created manually or by a previous partial run without a .db entry
     if File.exist? file_path
@@ -1112,8 +1117,17 @@ class WaybackMachineDownloader
     else
       filename = raw_path_elements.pop
       dir_path = File.join(current_backup_path, *raw_path_elements)
-      return File.join(dir_path, filename)
+      file_path = File.join(dir_path, filename)
     end
+
+    return nil unless path_inside_backup?(file_path)
+
+    file_path
+  end
+
+  def path_inside_backup?(path)
+    root = File.expand_path(backup_path)
+    File.expand_path(path).start_with?(root + File::SEPARATOR)
   end
 
   def color(text, color_code)
@@ -1216,6 +1230,7 @@ class WaybackMachineDownloader
         seg = segment.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '')
         seg = seg.gsub(/[:*?"<>|\\]/) { |c| "%#{c.ord.to_s(16).upcase}" }
         seg = seg.gsub(/[ .]+\z/, '') if Gem.win_platform?
+        seg = '*' if seg == '.' || seg == '..'
         seg.empty? ? '_' : seg
       end.join('/')
 
