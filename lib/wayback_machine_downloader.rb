@@ -172,7 +172,7 @@ class WaybackMachineDownloader
   include SubdomainProcessor
   include URLRewrite
 
-  VERSION = "2.5.0"
+  VERSION = "2.5.1"
   DEFAULT_TIMEOUT = 30
   MAX_RETRIES = 3
   RETRY_DELAY = 2
